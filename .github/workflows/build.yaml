@@ -1,0 +1,32 @@
+name: "build"
+on:
+  push:
+    branches:
+      - release
+
+jobs:
+  build-app:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+  runs-on: ${{ matrix.platform }}
+  steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-node@v3
+      with:
+        node-version: current
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: yarn install
+      run: yarn install && yarn build
+    - name: build app
+      uses: tauri-apps/tauri-action@v0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        releaseDraft: true
+        tagName: v__VERSION__
+        releaseName: "v__VERSION__"
+        releaseBody: "See the assets to download this version and install."

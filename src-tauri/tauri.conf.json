@@ -3,7 +3,7 @@
   "build": {
     "beforeBuildCommand": "yarn build",
     "beforeDevCommand": "yarn dev",
-    "devPath": "http://localhost:3000",
+    "devPath": "http://localhost:3000/",
     "distDir": "../dist"
   },
   "package": {
@@ -37,7 +37,7 @@
     },
     "bundle": {
       "active": true,
-      "category": "DeveloperTool",
+      "category": "Utility",
       "copyright": "",
       "deb": {
         "depends": []
@@ -50,7 +50,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.nukbal.doujin",
+      "identifier": "com.nukbal.furball",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
@@ -85,10 +85,9 @@
         "fullscreen": false,
         "height": 325,
         "resizable": false,
-        "title": "Furball",
+        "title": "furball",
         "decorations": false,
         "fileDropEnabled": true,
-        "skipTaskbar":true,
         "width": 580
       }
     ]

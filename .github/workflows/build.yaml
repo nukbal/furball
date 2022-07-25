@@ -19,6 +19,8 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - name: install ffmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v1
       - name: yarn install
         run: yarn install && yarn build
       - name: build app

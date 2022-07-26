@@ -12,25 +12,29 @@ pub struct FileMeta {
   size: u64,
 }
 
-pub async fn file_meta(paths: Vec<String>) -> String {
+pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
   let mut handles = vec![];
 
   for path in paths {
     handles.push(tokio::spawn(async move {
-      inspect_file(path, true).unwrap()
+      inspect_file(path, true)
     }));
   }
 
   let res = futures::future::join_all(handles).await;
   let mut result = vec![];
+
   for handle in res {
-    let file = handle.unwrap();
-    if file.mime_type != "" {
-      result.push(file);
+    match handle {
+      Ok(val) => match val {
+        Ok(file) => if file.mime_type != "" { result.push(file); },
+        Err(e) => { return Err(e.to_string()); },
+      },
+      Err(e) => { return Err(e.to_string()); },
     }
   }
 
-  serde_json::to_string(&result).unwrap()
+  Ok(serde_json::to_string(&result).unwrap())
 }
 
 pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, String> {
@@ -50,7 +54,12 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
   if file.is_dir {
     file.mime_type = "dir".to_string();
   } else {
-    let kind = get_file_type(&p).expect("unknown type");
+    let kind = match get_file_type(&p) {
+      Some(val) => val,
+      None => {
+        return Err("unknown type".to_string());
+      },
+    };
     file.mime_type = kind.mime_type().to_string();
   }
 

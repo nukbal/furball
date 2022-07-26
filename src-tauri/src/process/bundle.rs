@@ -7,7 +7,7 @@ use printpdf::{
 use super::images::{ImageConfig, optimize_image};
 use crate::config::{Config, ProcessMode};
 
-pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) {
+pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) -> Result<(), String> {
   let mut handles = vec![];
 
   for file_name in files {
@@ -65,6 +65,7 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) {
   }
 
   zip.finish().expect("unable to zip");
+  Ok(())
 }
 
 pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> usize {

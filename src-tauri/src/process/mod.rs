@@ -28,6 +28,7 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
           handles.push(tokio::spawn(async move {
             let path = Path::new(&meta.path);
             bundle::to_pdf(path, files, dir_conf).await;
+            Ok(())
           }));
           continue;
         }
@@ -35,7 +36,7 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
         if dir_conf.dir_mode == DirMode::Zip && utils::is_dir_only_media(meta.files.clone()) {
           handles.push(tokio::spawn(async move {
             let path = Path::new(&meta.path);
-            bundle::zip(path, files, dir_conf).await;
+            bundle::zip(path, files, dir_conf).await
           }));
           continue;
         }
@@ -71,12 +72,22 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
       },
     }
   }
-  
-  futures::future::join_all(handles).await;
+
+  let futures = futures::future::join_all(handles).await;
+
+  for fut in futures {
+    match fut {
+      Ok(_) => continue,
+      Err(e) => {
+        return Err(e.to_string());
+      },
+    }
+  }
+
   Ok(())
 }
 
-fn process_file(path: &Path, config: Config) -> Result<JoinHandle<()>, String> {
+fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), String>>, String> {
   let path_str = path.to_str().unwrap().to_string();
   match infer::get_from_path(&path) {
     Ok(nest_infer) => match nest_infer {
@@ -89,12 +100,13 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<()>, String> {
             suffix: config.suffix,
             width: if config.preserve { 0.0 } else { config.width },
             overwrite: config.mode == ProcessMode::Overwrite,
-          }).expect("failed to optimize image");
+          })
         }))
       },
       Some(file) if file.mime_type().starts_with("video") => {
         Ok(tokio::spawn(async move {
           // videos::compress(path_str);
+          Ok(())
         }))
       },
       _ => return Err("file is not supported".to_string()),
@@ -104,6 +116,9 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<()>, String> {
 }
 
 #[tauri::command]
-pub async fn file_meta(paths: Vec<String>) -> String {
-  inspect::file_meta(paths).await
+pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
+  match inspect::file_meta(paths).await {
+    Ok(buf) => Ok(buf),
+    Err(_) => Err("failed to inspect".to_string()),
+  }
 }

@@ -30,7 +30,9 @@ export default function App() {
             } else {
               reset();
             }
-          }).catch(() => reset());
+          }).catch((e) => {
+            reset();
+          });
       } else {
         file.setState({ status: e.payload.type });
       }

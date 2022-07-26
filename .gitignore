@@ -8,11 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-*.bun
 dist
 *.local
-# temporary disable bun lock file
-bun.lockb
 
 # Editor directories and files
 .vscode/*

@@ -1,7 +1,6 @@
-import { useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
-import * as y from 'yup';
+import * as y from 'yup/lib';
 
 import * as config from '../../../models/config';
 

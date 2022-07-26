@@ -20,7 +20,7 @@
     "react-transition-group": "^4.4.2",
     "styled-components": "^5.3.5",
     "yup": "^0.32.11",
-    "zustand": "^4.0.0-rc.4"
+    "zustand": "^4.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.0.5",

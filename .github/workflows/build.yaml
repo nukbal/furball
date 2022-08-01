@@ -17,8 +17,8 @@ jobs:
       - name: Install dependencies macos
         if: matrix.platform == 'macos-latest'
         run: |
-          brew install ffmpeg pkg-config
-          cp /opt/homebrew/bin/ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
+          brew install ffmpeg
+          cp /usr/local/bin/ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
 
       - name: Install dependencies windows
         if: matrix.platform == 'windows-latest'
@@ -29,6 +29,7 @@ jobs:
           7z x ffmpeg-release-full-shared.7z
           mkdir ffmpeg
           mv ffmpeg-*/* ffmpeg/
+          mkdir src-tauri/bin
           mv ffmpeg/bin/ffmpeg.exe src-tauri/bin/ffmpeg-x86_64-pc-windows-msvc.exe
 
       - uses: actions/cache@v3

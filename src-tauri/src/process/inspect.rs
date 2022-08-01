@@ -106,7 +106,10 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
           .expect("file read successfully")
           .expect("file type is unknown");
   
-        file.thumbnail = generate_thumbnail(first_path.to_str().unwrap().to_string(), first_kind.mime_type()).unwrap();
+        file.thumbnail = generate_thumbnail(
+          first_path.to_str().unwrap().to_string(),
+          first_kind.mime_type(),
+        ).unwrap();
       }
       // exclude empty dir
       if file.files.len() == 0 {

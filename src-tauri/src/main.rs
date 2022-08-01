@@ -9,7 +9,6 @@ mod process;
 mod config;
 
 fn main() {
-  ffmpeg::init().unwrap();
   let mut builder = tauri::Builder::default();
 
   #[cfg(target_os = "windows")] {

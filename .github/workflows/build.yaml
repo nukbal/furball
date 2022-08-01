@@ -17,9 +17,10 @@ jobs:
       - name: Install dependencies macos
         if: matrix.platform == 'macos-latest'
         run: |
-          brew install ffmpeg
+          curl -o ./ffmpeg.7z https://evermeet.cx/ffmpeg/ffmpeg-5.1.7z
+          7z x ffmpeg.7z
           mkdir src-tauri/bin
-          cp /usr/local/bin/ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
+          mv ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
 
       - name: Install dependencies windows
         if: matrix.platform == 'windows-latest'

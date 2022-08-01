@@ -61,7 +61,7 @@ export default function GeneralConfig() {
               />
               <small>px</small>
             </HorizontalField>
-            <small>가로 비율이 더 큰 이미지는 목표 너비의 2배로 설정합니다.</small>
+            <small>가로 비율이 더 큰 이미지는 세로기준으로 조절합니다.</small>
           </Field>
         )}
       </HorizontalField>

@@ -108,8 +108,8 @@ fn resize(img: &DynamicImage, target_width: f32) -> Result<DynamicImage, String>
   let ratio = height / width;
 
   let image = if width > height {
-    let target_height = (target_width * 2.0 * ratio) as u32;
-    resize_image(img, (target_width * 2.0) as u32, target_height)
+    let target_height = (target_width / ratio) as u32;
+    resize_image(img, target_height, target_width as u32)
   } else {
     let target_height = (target_width * ratio) as u32;
     resize_image(img, target_width as u32, target_height)

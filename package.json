@@ -4,7 +4,7 @@
   "version": "0.1.1",
   "scripts": {
     "dev": "bun dev",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

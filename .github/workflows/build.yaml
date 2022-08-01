@@ -18,6 +18,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: |
           brew install ffmpeg
+          mkdir src-tauri/bin
           cp /usr/local/bin/ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
 
       - name: Install dependencies windows

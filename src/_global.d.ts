@@ -1,37 +1,5 @@
-declare interface AppTheme {
-  isDark: boolean;
-  gray50: string;
-  gray75: string;
-  gray100: string;
-  gray200: string;
-  gray300: string;
-  gray400: string;
-  gray500: string;
-  gray600: string;
-  gray700: string;
-  gray800: string;
-  gray900: string;
 
-  blue400: string;
-  blue500: string;
-  blue600: string;
-  blue700: string;
-
-  red400: string;
-  red500: string;
-  red600: string;
-  red700: string;
-
-  orange400: string;
-  orange500: string;
-  orange600: string;
-  orange700: string;
-
-  green400: string;
-  green500: string;
-  green600: string;
-  green700: string;
-}
+declare type SVGProps = import('solid-js').JSX.SvgSVGAttributes<SVGSVGElement>;
 
 declare interface InnerFileType {
   path: string;

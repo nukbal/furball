@@ -1,4 +1,5 @@
-use std::{path::Path, io::{BufWriter, Write, BufReader}, fs::File, char};
+use std::{path::Path, io::{BufWriter, Write, BufReader}, fs::File};
+use std::string::String;
 use printpdf::{
   PdfDocument, ImageXObject, Image, Px, ColorSpace, ColorBits, ImageFilter,
   ImageTransform,
@@ -26,6 +27,7 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) -> Result<
               quality: conf.quality,
               suffix: conf.suffix.clone(),
               width: if conf.preserve { 0.0 } else { conf.width },
+              ai: conf.ai,
             }).unwrap();
   
             Some((buf, name.to_string()))
@@ -68,9 +70,9 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) -> Result<
   Ok(())
 }
 
-pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> usize {
+pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> Result<(), String> {
   let dir_name = dir_path.file_name().unwrap().to_str().unwrap().to_string();
-  let title = to_utf16(&dir_name);
+
   let mut handles = vec![];
 
   for file_name in files {
@@ -83,6 +85,7 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> usiz
         quality: conf.quality,
         suffix: conf.suffix.clone(),
         width: if conf.preserve { 0.0 } else { conf.width },
+        ai: conf.ai,
       }).unwrap()
     }));
   }
@@ -92,7 +95,15 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> usiz
     buffers.push(buf.unwrap());
   }
 
-  let doc = PdfDocument::empty(title);
+
+  // let mut title = vec![b'\xfe', b'\xff'];
+  // title.extend(lopdf::Document::encode_text(
+  //     Some("UniGB−UTF16−H"),
+  //     dir_name.as_str(),
+  // ));
+  // let doc = PdfDocument::empty(String(title, lopdf::StringFormat::Literal));
+  let doc = PdfDocument::empty(dir_name.as_str());
+
   for (buf, width, height) in buffers {
     let (page, layer) = doc.add_page(
       Px(width as usize).into_pt(300.0).into(),
@@ -122,18 +133,9 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config) -> usiz
   };
 
   doc.save(&mut BufWriter::new(File::create(&file_path).unwrap())).unwrap();
-  std::fs::read(&file_path).unwrap().len()
+  Ok(())
 }
 
-fn to_utf16(name: &String) -> String {
-  let mut source = name.encode_utf16().collect::<Vec<u16>>();
-  source.push(0);
+pub async fn optimize_pdf(filepath: &Path, config: Config) {
 
-  let decoded = char::decode_utf16(source.iter().cloned());
-  let mut buf = String::with_capacity(name.len());
-  for r in decoded {
-    buf.push(r.unwrap_or(char::REPLACEMENT_CHARACTER));
-  }
-
-  buf
 }

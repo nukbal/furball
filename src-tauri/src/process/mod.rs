@@ -1,4 +1,3 @@
-use tauri::State;
 use images::ImageConfig;
 use std::path::Path;
 use tokio::task::JoinHandle;
@@ -9,11 +8,10 @@ mod inspect;
 mod bundle;
 mod utils;
 
-use crate::config::{Config, ConfigConnect};
-use crate::config::{ProcessMode, DirMode};
+use crate::config::{Config,ProcessMode, DirMode};
 
 #[tauri::command]
-pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnect>) -> Result<(), String> {
+pub async fn process_files(filenames: Vec<String>, conf: Config) -> Result<(), String> {
   let mut handles = vec![];
 
   for filename in filenames {
@@ -21,14 +19,13 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
     
     match meta.mime_type.as_str() {
       "dir" => {
-        let dir_conf = state.inner().lock().unwrap().clone();
+        let dir_conf = conf.clone();
         let files = meta.files.iter().map(|item| item.path.clone()).collect::<Vec<String>>();
 
         if dir_conf.dir_mode == DirMode::Pdf && utils::is_dir_only_image(meta.files.clone()) {
           handles.push(tokio::spawn(async move {
             let path = Path::new(&meta.path);
-            bundle::to_pdf(path, files, dir_conf).await;
-            Ok(())
+            bundle::to_pdf(path, files, dir_conf).await
           }));
           continue;
         }
@@ -44,10 +41,10 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
         for nest_file in meta.files {
           let nest_path = Path::new(&nest_file.path);
           if !nest_file.is_dir && nest_file.files.len() == 0 {
-            match process_file(&nest_path, state.inner().lock().unwrap().clone()) {
-              Ok(handle) => handles.push(handle),
-              Err(_err) => continue,
-            }
+            let Ok(handle) = process_file(&nest_path, conf.clone()) else {
+              continue;
+            };
+            handles.push(handle);
           } else {
             for d_nest in nest_file.files {
               // igrnoe tripple nested directory
@@ -55,17 +52,17 @@ pub async fn process_files(filenames: Vec<String>, state: State<'_, ConfigConnec
                 continue;
               }
               let cur_path = Path::new(&d_nest.path);
-              match process_file(&cur_path, state.inner().lock().unwrap().clone()) {
-                Ok(handle) => handles.push(handle),
-                Err(_err) => continue,
-              }
+              let Ok(handle) = process_file(&cur_path, conf.clone()) else {
+                continue;
+              };
+              handles.push(handle);
             }
           }
         }
       },
       _ => {
         let path = Path::new(&meta.path);
-        match process_file(path, state.inner().lock().unwrap().clone()) {
+        match process_file(path, conf.clone()) {
           Ok(handle) => handles.push(handle),
           Err(_err) => continue,
         }
@@ -100,6 +97,7 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), Str
             suffix: config.suffix,
             width: if config.preserve { 0.0 } else { config.width },
             overwrite: config.mode == ProcessMode::Overwrite,
+            ai: config.ai,
           })
         }))
       },
@@ -117,8 +115,5 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), Str
 
 #[tauri::command]
 pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
-  match inspect::file_meta(paths).await {
-    Ok(buf) => Ok(buf),
-    Err(_) => Err("failed to inspect".to_string()),
-  }
+  inspect::file_meta(paths).await
 }

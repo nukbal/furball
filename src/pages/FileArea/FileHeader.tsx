@@ -1,29 +1,18 @@
-import { useCallback } from 'react';
-import styled from 'styled-components';
-import { useFile } from '../../models/file';
+import { Show } from 'solid-js';
+import file from 'models/file';
 
 export default function FileHeader() {
-  const filename = useFile(useCallback(({ data, paths }) => data.get(paths[0])?.filename ?? '', []));
-  const counts = useFile(useCallback(({ paths, data }) => data.size, []));
+  const filename = () => file().data.get(file().paths[0])?.filename ?? '';
+  const size = () => file().data.size > 1 ? ` (+${file().data.size - 1})` : null;
 
   return (
-    <FileTitle data-tauri-drag-region>
-      <span>{filename}</span>
-      {counts > 1 ? ` (+${counts - 1})` : null}
-    </FileTitle>
+    <header class="flex item-center pointer-events-none p-2 pl-4 mb-2" data-tauri-drag-region>
+      <span class="block overflow-hidden text-ellipsis whitespace-nowrap" style={{ 'max-width': '425px' }}>
+        {filename()}
+      </span>
+      <Show when={size()}>
+        <span class="ml-1">{size()}</span>
+      </Show>
+    </header>
   );
 }
-
-const FileTitle = styled.header`
-  display: flex;
-  align-items: center;
-  pointer-events: none;
-
-  span {
-    display: block;
-    max-width: 425px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-`;

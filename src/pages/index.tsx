@@ -1,84 +1,56 @@
-import { useCallback, useEffect, useState } from 'react';
-import styled from 'styled-components';
+import { Switch, Match, createEffect } from 'solid-js';
 import { appWindow } from '@tauri-apps/api/window';
-import { UnlistenFn } from '@tauri-apps/api/event';
 
-import Button from '../components/Button';
-import CloseIcon from '../components/Icons/Close';
-
-import s from '../styles/static';
-import getFileMeta from '../utils/getFileMeta';
-import file, { setFileData, reset, useFile } from '../models/file';
+import CloseIcon from 'components/Icons/Close';
+import Button from 'components/Button';
+import mode from 'models/mode';
+import file from 'models/file';
+import isDarkMode from 'models/dark';
 
 import EmptyStatus from './EmptyStatus';
 import FileArea from './FileArea';
-import Credit from './Credit';
+import Credit, { CreditButton } from './Credit';
+import DropArea from './DropArea';
+import ConfigArea from './Config';
 
 export default function App() {
-  const status = useFile(({ status }) => status);
 
-  useEffect(() => {
-    let unsub: UnlistenFn;
-    appWindow.onFileDropEvent((e) => {
-      if (e.payload.type === 'drop') {
-        const paths = e.payload.paths;
-        reset({ paths, status: 'loading' });
-        getFileMeta(paths)
-          .then((res) => {
-            if (res.length) {
-              setFileData(res);
-            } else {
-              reset();
-            }
-          }).catch((e) => {
-            reset();
-          });
-      } else {
-        file.setState({ status: e.payload.type });
-      }
-    }).then((cb) => {
-      unsub = cb;
-    });
-    return () => unsub?.();
-  }, []);
+  createEffect(() => {
+    if (!isDarkMode()) {
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+    }
+  });
+
+  const page = () => {
+    const val = mode();
+    if (file().data.size > 0 && val !== 'credit' && val !== 'config') return 'file';
+    if (val === 'hover' || val === 'loading') return 'cancel';
+    return val;
+  };
 
   return (
-    <Container data-tauri-drag-region>
-      {status !== 'drop' && <EmptyStatus />}
-      {status === 'drop' && <FileArea />}
-      <Close onClick={() => appWindow.close()}>
-        <CloseIcon />
-      </Close>
-      <Credit />
-    </Container>
+    <div class="relative min-w-full min-h-full rounded-xl bg-gray-200 dark:text-gray-300 dark:bg-gray-800" data-tauri-drag-region>
+      <Switch>
+        <Match when={page() === 'cancel'}>
+          <EmptyStatus />
+        </Match>
+        <Match when={page() === 'file'}>
+          <FileArea />
+        </Match>
+        <Match when={page() === 'config'}>
+          <ConfigArea />
+        </Match>
+        <Match when={page() === 'credit'}>
+          <Credit />
+        </Match>
+      </Switch>
+      <DropArea />
+      <Button class="absolute right-2 top-2" onClick={appWindow.close}>
+        <CloseIcon class="h-6 w-6" />
+      </Button>
+      <CreditButton />
+    </div>
   );
 }
-
-const Container = styled.div`
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  padding: ${s.size['6']};
-`;
-
-const Close = styled(Button)`
-  position: absolute;
-  right: ${s.size['4']};
-  top: ${s.size['4']};
-
-  padding: ${s.size['1']} ${s.size['1.5']};
-  color: ${({ theme }) => theme.gray800};
-
-  svg {
-    width: ${s.size['8']};
-    height: ${s.size['8']};
-  }
-
-  &:hover {
-    background: ${({ theme }) => theme.gray300};
-  }
-  &:active, &:focus {
-    background: ${({ theme }) => theme.gray100};
-  }
-`;

@@ -1,32 +1,20 @@
-import styled from 'styled-components';
+import { JSX, splitProps, createMemo } from 'solid-js';
+import type { Config } from 'tailwindcss';
 
-import s from '../styles/static';
-import { transition } from '../styles/mixins';
+interface Props extends JSX.HTMLAttributes<HTMLButtonElement> {
+}
 
-export default styled.button`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: ${s.size['3']} ${s.size['4']};
-  color: ${({ theme }) => theme.gray800};
-  border-radius: ${s.radius['lg']};
-  cursor: pointer;
+export default function Button(props: Props) {
+  const [local, rest] = splitProps(props, ['class']);
+  const className = createMemo(() => {
+    return [
+      'p-1',
+      'rounded-lg',
+      'hover:bg-gray-300',
+      'dark:hover:bg-gray-700',
+      local.class,
+    ].filter(Boolean).join(' ');
+  });
 
-  transition: background-color 350ms ${transition.cubicBezier};
-
-  &:hover {
-    background: ${({ theme }) => theme.gray500};
-  }
-
-  &:focus, &:active {
-    background: ${({ theme }) => theme.gray300};
-  }
-
-  &:disabled, &:disabled:hover {
-    cursor: default;
-    background: ${({ theme }) => theme.gray200};
-  }
-`;
+  return <button class={className()} {...rest}/>;
+}

@@ -1,6 +1,5 @@
+import { createStore } from 'solid-js/store';
 import { downloadDir } from '@tauri-apps/api/path';
-import { invoke } from '@tauri-apps/api/tauri';
-import create from 'zustand';
 
 export interface ConfigType {
   // general
@@ -13,6 +12,7 @@ export interface ConfigType {
   width: number;
   quality: number;
   gif: 'webp' | 'mp4';
+  ai: boolean;
 
   dir_mode: 'none' | 'pdf' | 'zip';
 }
@@ -26,41 +26,41 @@ export const defaultValues = {
   width: 1440,
   quality: 88,
   gif: 'mp4',
+  ai: true,
 
   dir_mode: 'none',
 } as ConfigType;
 
-export const useConfig = create<ConfigType>(() => defaultValues);
-
 function parseCacheString(str: string | null) {
   const json = str ? JSON.parse(str) : {};
-  const res = {} as ConfigType;
-  const validKeys = Object.keys(defaultValues) as (keyof ConfigType)[];
+  const res = { ...defaultValues } as ConfigType;
+  const validKeys = Object.keys(defaultValues);
   validKeys.forEach((key) => {
     const value = json[key];
     // @ts-ignore
-    res[key] = value !== undefined ? value : defaultValues[key];
+    res[key] = value !== undefined ? value : res[key];
   });
   return res;
 }
 
+const [state, setState] = createStore<ConfigType>(defaultValues);
+
+export default state;
+
 export async function bootstrap() {
-  defaultValues.path = await downloadDir();
   const cache = localStorage.getItem('config');
-  useConfig.setState(parseCacheString(cache));
   if (cache) {
-    await invoke('write_config', { value: cache });
+    setState(parseCacheString(cache));
+  } else {
+    setState('path', await downloadDir());
   }
 }
 
 export function get() {
-  return useConfig.getState();
+  return state;
 }
 
 export async function setConfig(value: ConfigType) {
-  useConfig.setState(value);
-
-  const str = JSON.stringify(value);
-  localStorage.setItem('config', str);
-  await invoke('write_config', { value: str });
+  localStorage.setItem('config', JSON.stringify(value));
+  setState(value);
 }

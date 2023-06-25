@@ -1,9 +1,9 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "build": {
-    "beforeBuildCommand": "yarn build",
-    "beforeDevCommand": "yarn dev",
-    "devPath": "http://localhost:3000/",
+    "beforeBuildCommand": "bun run build",
+    "beforeDevCommand": "bun run dev",
+    "devPath": "http://localhost:1420/",
     "distDir": "../dist"
   },
   "package": {
@@ -13,13 +13,6 @@
   "tauri": {
     "allowlist": {
       "all": false,
-      "fs": {
-        "copyFile": true,
-        "createDir": true,
-        "readDir": true,
-        "readFile": true,
-        "writeFile": true
-      },
       "window": {
         "close": true,
         "setDecorations": true,
@@ -32,15 +25,14 @@
         "all": true
       },
       "dialog": {
-        "open": true
+        "open": true,
+        "message": true
       },
       "shell": {
         "sidecar": true,
         "scope": [
-          {
-            "name": "bin/ffmpeg",
-            "sidecar": true
-          }
+          { "name": "bin/ffmpeg", "sidecar": true },
+          { "name": "bin/upscale", "sidecar": true }
         ]
       }
     },
@@ -51,7 +43,7 @@
       "deb": {
         "depends": []
       },
-      "externalBin": ["bin/ffmpeg"],
+      "externalBin": ["bin/ffmpeg", "bin/upscale"],
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -71,7 +63,12 @@
       "appimage": {
         "bundleMediaFramework": true
       },
-      "resources": [],
+      "resources": [
+        "models/realesr-animevideov3-x2.bin",
+        "models/realesr-animevideov3-x2.param",
+        "models/realesr-animevideov3-x4.bin",
+        "models/realesr-animevideov3-x4.param"
+      ],
       "shortDescription": "",
       "targets": "all",
       "windows": {

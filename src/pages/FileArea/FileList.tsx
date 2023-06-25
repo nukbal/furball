@@ -1,124 +1,76 @@
-import { useMemo, useCallback } from 'react';
-import styled from 'styled-components';
+import { Show, For, Switch, Match, createMemo } from 'solid-js';
 
-import FolderIcon from '../../components/Icons/Folder';
-import FilmIcon from '../../components/Icons/Film';
-import PhotoIcon from '../../components/Icons/Photo';
+import FolderIcon from 'components/Icons/Folder';
+import FilmIcon from 'components/Icons/Film';
+import PhotoIcon from 'components/Icons/Photo';
 
-import { useFile } from '../../models/file';
-import s from '../../styles/static';
-import nonNullable from '../../utils/nonNullable';
-import parseFileSize from '../../utils/parseFileSize';
+import file, { fileData } from 'models/file';
+import nonNullable from 'utils/nonNullable';
+import parseFileSize from 'utils/parseFileSize';
+import { Dynamic } from 'solid-js/web';
 
 interface ItemProps {
   path: string;
   nest?: number;
 }
 
-function FileItem({ path, nest = 0 }: ItemProps) {
-  const data = useFile(useCallback(({ data }) => data.get(path) ?? null, [path]));
+function FileItem(p: ItemProps) {
+  const target = () => file().data.get(p.path);
+  const files = () => target()?.files ?? [];
+  const nestedPadding = () => {
+    if (p.nest === 1) return 'pl-4';
+    if (p.nest === 2) return 'pl-8';
+    return '';
+  };
+  const maxWidth = () => `${258 - (12 * (p.nest || 0))}px`;
 
-  const [paddingLeft, maxWidth] = useMemo(() => {
-    if (nest === 1) return [s.size['8'], '245px'];
-    if (nest === 2) return [s.size['16'], '225px'];
-    return [s.size['2'], '265px'];
-  }, [nest]);
-
-  if (!data) return null;
   return (
-    <>
-      <ListItem style={{ paddingLeft }}>
-        <div>
-          {getMimeIcon(data.mime_type)}
-          <abbr title={data.path} style={{ maxWidth }}>{data.filename}</abbr>
-        </div>
-        <small>{data.is_dir ? data.files.length : parseFileSize(data.size)}</small>
-      </ListItem>
-      {data.files?.map((item) => (
-        <FileItem key={item} path={item} nest={nest + 1} />
-      ))}
-    </>
+    <Show when={target()}>
+      {(data) => (
+        <>
+          <li class="flex items-center justify-between py-1 even:bg-gray-300 dark:even:bg-gray-600">
+            <div class={`flex items-center ${nestedPadding()}`}>
+              <MineIcon mineType={data().mime_type} />
+              <abbr
+                class="inline-block whitespace-nowrap overflow-hidden text-ellipsis no-underline leading-1"
+                title={p.path}
+                style={{ 'max-width': maxWidth() }}
+              >
+                {data().filename}
+              </abbr>
+            </div>
+            <small class="leading-none">{data().is_dir ? data().files.length : parseFileSize(data().size)}</small>
+          </li>
+          <For each={files()}>
+            {(item) => <FileItem path={item} nest={(p.nest ?? 0) + 1} />}
+          </For>
+        </>
+      )}
+    </Show>
   );
 }
 
 export default function FileList() {
-  const files = useFile(useCallback(({ data, paths }) => paths.map((path) => data.get(path)).filter(nonNullable), []));
-  const totalSize = useFile(useCallback(({ totalSize }) => totalSize, []));
-  const len = useFile(useCallback(({ data }) => data.size, []));
-
   return (
     <>
-      <List>
-        {files.map((file) => (
-          <FileItem key={file.path} path={file.path} />
-        ))}
-      </List>
-      <FileStatus>
-        <small>총 {len}개</small>
-        <small>{parseFileSize(totalSize)}</small>
-      </FileStatus>
+      <ul class="flex-auto overflow-y-auto" style={{ 'max-height': '176px', 'min-height': '176px' }}>
+        <For each={file().paths}>
+          {(path) => <FileItem path={path} />}
+        </For>
+      </ul>
+      <div class="flex justify-between items-center">
+        <small>총 {file().data.size}개</small>
+        <small>{parseFileSize(file().totalSize)}</small>
+      </div>
     </>
   );
 }
 
-function getMimeIcon(mimeType: string) {
-  if (mimeType === 'dir') return <FolderIcon />;
-  if (mimeType.startsWith('video')) return <FilmIcon />;
-  return <PhotoIcon />;
+function MineIcon(p: { mineType: string; }) {
+  const icon = () => {
+    if (p.mineType === 'dir') return FolderIcon;
+    if (p.mineType.startsWith('video')) return FilmIcon;
+    return PhotoIcon;
+  };
+  return <Dynamic component={icon()} class="inline-block w-5 h-5 mr-1" />;
 }
-
-const List = styled.ul`
-  list-style-type: none;
-  margin: 0;
-  padding: 0;
-  flex: auto;
-  overflow-y: auto;
-  min-height: 165px;
-  max-height: 165px;
-  margin-top: ${s.size['2']};
-  user-select: none;
-`;
-
-const ListItem = styled.li`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  height: ${s.size['10']};
-  font-size: ${s.size['6']};
-  padding: 0 ${s.size['2']};
-
-  & > div {
-    display: flex;
-    align-items: center;
-  }
-
-  abbr {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-right: ${s.size['4']};
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  svg {
-    width: ${s.size['6']};
-    height: ${s.size['6']};
-    margin-right: ${s.size['2']};
-  }
-
-  &:nth-child(2n - 1) {
-    background: ${({ theme }) => theme.gray100};
-  }
-
-  &:nth-child(2n) {
-    background: ${({ theme }) => theme.gray300};
-  }
-`;
-
-const FileStatus = styled.footer`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: ${s.size['2']} 0;
-`;

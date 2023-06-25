@@ -27,3 +27,4 @@ dist
 /src-tauri/target
 # binary will be downloaded via ci
 /src-tauri/bin/*
+/src-tauri/models/*

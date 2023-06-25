@@ -1,48 +1,41 @@
-import { useCallback, useMemo } from 'react';
-import styled from 'styled-components';
+import { createMemo } from 'solid-js';
 
-import { useConfig } from '../../models/config';
-import { useFile } from '../../models/file';
-
-import s from '../../styles/static';
+import config from 'models/config';
+import file from 'models/file';
 
 export default function FooterInfo() {
-  const mode = useFile(useCallback(({ mode }) => ({
-    img: mode.includes('image'),
-    vid: mode.includes('video'),
-    dir: mode.includes('dir'),
-  }), []));
-  const config = useConfig();
+  const configInfo = createMemo(() => {
+    const mode = file().mode;
+    const isImg = mode.includes('image');
+    const isVideo = mode.includes('video');
+    const isFolder = mode.includes('dir');
 
-  const configInfo = useMemo(() => [
-    `덮어쓰기: ${config.mode === 'overwrite' ? 'O' : 'X'}`,
-    `저장장소: ${config.path}`,
-    config.suffix ? `접미사: ${config.suffix}` : '',
+    return [
+      `덮어쓰기: ${config.mode === 'overwrite' ? '○' : '×'}`,
+      `저장장소: ${config.path}`,
+      config.suffix ? `접미사: ${config.suffix}` : '',
 
-    // 이미지의 경우
-    ...(mode.img ? [
-      `이미지 퀄리티: ${config.quality}`,
-      config.preserve ? `이미지 크기 유지` : `리사이징: ${config.width}px`,
-      `GIF 변환: ${config.gif}`,
-    ] : []),
+      // 이미지의 경우
+      ...(isImg ? [
+        `이미지 퀄리티: ${config.quality}`,
+        config.preserve ? `이미지 크기 유지` : `리사이징: ${config.width}px`,
+        `GIF 변환: ${config.gif}`,
+        `AI 스케일링: ${config.ai ? '○' : '×'}`
+      ] : []),
 
-    ...(mode.dir ? [
-      `폴더 처리: ${config.dir_mode === 'none' ? '개별처리' : `${config.dir_mode.toUpperCase()} 변환`}`,
-    ] : []),
-  ].filter(Boolean).join(', '), [mode, config]);
+      ...(isFolder ? [
+        `폴더 처리: ${config.dir_mode === 'none' ? '개별처리' : `${config.dir_mode.toUpperCase()} 변환`}`,
+      ] : []),
+    ].filter(Boolean).join(', ')
+  });
 
-  return <Footer data-tauri-drag-region>{configInfo}</Footer>;
+  return (
+    <abbr
+      class="absolute left-3 right-8 bottom-2 text-xs text-gray-600 whitespace-nowrap break-words overflow-hidden text-ellipsis no-underline cursor-default"
+      data-tauri-drag-region
+      title={configInfo()}
+    >
+      {configInfo()}
+    </abbr>
+  );
 }
-
-const Footer = styled.footer`
-  position: absolute;
-  left: ${s.size['8']};
-  right: ${s.size['8']};
-  bottom: ${s.size['4']};
-  font-size: 0.875rem;
-  color: ${({ theme }) => theme.gray400};
-
-  pointer-events: none;
-  white-space: pre-wrap;
-  word-break: break-word;
-`;

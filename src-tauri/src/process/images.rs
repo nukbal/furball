@@ -3,6 +3,9 @@ use image::{DynamicImage};
 use mozjpeg::{Compress, ColorSpace, ScanMode};
 use std::num::NonZeroU32;
 use fast_image_resize as fr;
+use base64::{Engine as _, engine::{general_purpose}};
+use nanoid::nanoid;
+
 
 #[derive(Debug, Clone)]
 pub struct ImageConfig {
@@ -12,16 +15,25 @@ pub struct ImageConfig {
   pub quality: f32,
   pub width: f32,
   pub overwrite: bool,
+  pub ai: bool,
+}
+
+fn open_image(path: &Path) -> Result<DynamicImage, String> {
+  let file_name = path.file_name().unwrap().to_string_lossy();
+  match image::open(path) {
+    Ok(buf) => Ok(buf),
+    Err(err) => return Err(format!("{}: {}", file_name, err).to_string()),
+  }
 }
 
 pub fn thumbnail(file_path: String) -> Result<String, String> {
   let path = Path::new(&file_path);
-  let img = image::open(path).unwrap();
+  let img = open_image(&path)?;
   let resized = resize(&img, 250.0)?;
   let compressed = compress_image(resized, 45.0)?;
-  let b64 = base64::encode(&compressed);
+  let buf = general_purpose::STANDARD.encode(&compressed);
 
-  Ok(b64)
+  Ok(buf)
 }
 
 pub fn thumbnail_from_buf(buf: Vec<u8>, width: u32, height: u32) -> Result<String, String> {
@@ -47,15 +59,14 @@ pub fn thumbnail_from_buf(buf: Vec<u8>, width: u32, height: u32) -> Result<Strin
   resizer.resize(&src_image.view(), &mut dst_view).unwrap();
 
   let optimized = compress_buf(dst_image.buffer().to_vec(), 250, target_height as usize, 65.0)?;
-  Ok(base64::encode(&optimized))
+  Ok(general_purpose::STANDARD.encode(&optimized))
 }
 
 pub fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
   let path = Path::new(&config.path);
-  let img = image::open(path).unwrap();
   let filename = path.with_extension("").file_name().unwrap().to_string_lossy().to_string();
 
-  let (data, _, _) = optimize(img, config.quality, config.width)?;
+  let (buf, _, _) = optimize_image(config.clone())?;
 
   let base_path = if config.overwrite {
     path.parent().unwrap().to_path_buf()
@@ -64,16 +75,22 @@ pub fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
   };
 
   let target_file = base_path.join(format!("{}{}.{}", filename, config.suffix, "jpg"));
-  std::fs::write(target_file, &data).expect("failed to write file");
+  std::fs::write(target_file, &buf).expect("failed to write file");
 
   Ok(())
 }
 
 pub fn optimize_image(config: ImageConfig) -> Result<(Vec<u8>, u32, u32), String> {
   let path = Path::new(&config.path);
-  let img = image::open(path).unwrap();
-  let res = optimize(img, config.quality, config.width)?;
-  Ok(res)
+  let img = open_image(&path)?;
+  let target_width = config.width.clone() as u32;
+  if img.width() < target_width && target_width > 0 && config.ai {
+    let scale = if img.width() * 2 <= target_width { 2 } else { 4 };
+    let upscaled_img = upscale_image(&config.path, scale)?;
+    Ok(optimize(upscaled_img, config.quality, config.width)?)
+  } else {
+    Ok(optimize(img, config.quality, config.width)?)
+  }
 }
 
 fn optimize(img: DynamicImage, quality: f32, width: f32) -> Result<(Vec<u8>, u32, u32), String> {
@@ -139,4 +156,29 @@ fn compress_image(img: DynamicImage, quality: f32) -> Result<Vec<u8>, String> {
   let height = img.height() as usize;
 
   compress_buf(data, width, height, quality)
+}
+
+fn upscale_image(path: &String, scale: u8) -> Result<DynamicImage, String> {
+  let cache_dir = super::utils::get_cache_dir().unwrap();
+  let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
+  let out_path = cache_dir.join(format!("upscale_{}.png", job_id));
+
+  let _output = match tauri::api::process::Command::new_sidecar("upscale")
+    .expect("failed to create `upscale` binary command")
+    .args(["-i", &path, "-o", out_path.to_str().unwrap(), "-n", "realesr-animevideov3", "-s", &scale.to_string()])
+    .output() {
+      Ok(out) => out,
+      Err(err) => return Err(format!("Error executing RealESRGAN Upscaler. \n{:?}", err).to_string()),
+    };
+
+  if !out_path.is_file() {
+    return Err("file does not generated".to_string());
+  }
+
+  let img = open_image(&out_path);
+
+  // remove cache
+  std::fs::remove_file(out_path).unwrap();
+
+  Ok(img.unwrap())
 }

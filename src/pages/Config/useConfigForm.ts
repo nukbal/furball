@@ -1,8 +1,8 @@
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
-import * as y from 'yup/lib';
+import * as y from 'yup';
 
-import * as config from '../../../models/config';
+import * as config from '../../models/config';
 
 const schema = y.object({
   mode: y.string().oneOf(['overwrite', 'path']),

@@ -54,11 +54,8 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
   if file.is_dir {
     file.mime_type = "dir".to_string();
   } else {
-    let kind = match get_file_type(&p) {
-      Some(val) => val,
-      None => {
-        return Err("unknown type".to_string());
-      },
+    let Some(kind) = get_file_type(&p) else {
+      return Err("unknown type".to_string());
     };
     file.mime_type = kind.mime_type().to_string();
   }

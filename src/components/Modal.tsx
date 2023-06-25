@@ -1,10 +1,6 @@
-import React from 'react';
+import { Portal } from "solid-js/web";
 import styled, { css } from 'styled-components';
 import { Transition } from 'react-transition-group';
-
-import s from '../styles/static';
-
-import Portal from './Portal';
 
 interface Props {
   children: React.ReactNode;

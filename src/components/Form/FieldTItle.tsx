@@ -1,7 +1,11 @@
-import styled from 'styled-components';
+import { splitProps } from 'solid-js';
+import type { JSX } from 'solid-js';
 
-export default styled.h3`
-  font-weight: 500;
-  font-size: 1.5rem;
-  color: ${({ theme }) => theme.gray800};
-`;
+interface Props extends Omit<JSX.HTMLAttributes<HTMLHeadingElement>, 'children'> {
+  label: string;
+}
+
+export default function FieldTitle(props: Props) {
+  const [local, rest] = splitProps(props, ['label', 'class'])
+  return <h3 class={`text-gray-800 font-medium text-lg ${local.class}`} {...rest}>{local.label}</h3>;
+}

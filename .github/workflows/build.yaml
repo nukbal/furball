@@ -56,6 +56,7 @@ jobs:
           mv realesrgan-ncnn-vulkan.exe src-tauri/bin/realesrgan-x86_64-pc-windows-msvc.exe
           mv vcomp140.dll src-tauri/bin/vcomp140.dll
           mv vcomp140d.dll src-tauri/bin/vcomp140d.dll
+          mkdir src-tauri/models
           mv models/realesr-animevideov3-x2.bin src-tauri/models/realesr-animevideov3-x2.bin
           mv models/realesr-animevideov3-x2.param src-tauri/models/realesr-animevideov3-x2.param
           mv models/realesr-animevideov3-x4.bin src-tauri/models/realesr-animevideov3-x4.bin

@@ -79,7 +79,7 @@ jobs:
       - name: yarn install
         run: yarn install
       - name: build app
-        uses: tauri-apps/tauri-action@latest
+        uses: tauri-apps/tauri-action@0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

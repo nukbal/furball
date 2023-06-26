@@ -11,6 +11,7 @@
     "version": "0.1.2"
   },
   "tauri": {
+    "macOSPrivateApi": true,
     "allowlist": {
       "all": false,
       "window": {
@@ -43,7 +44,7 @@
       "deb": {
         "depends": []
       },
-      "externalBin": ["bin/ffmpeg", "bin/realesrgan"],
+      "externalBin": ["bin/*"],
       "resources": ["models/*"],
       "icon": [
         "icons/32x32.png",
@@ -89,6 +90,7 @@
         "title": "furball",
         "decorations": false,
         "fileDropEnabled": true,
+        "transparent": true,
         "width": 580
       }
     ]

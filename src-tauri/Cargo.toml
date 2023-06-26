@@ -17,7 +17,7 @@ tauri-build = { version = "1.4", features = [] }
 [dependencies]
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "1.4", features = ["process-command-api", "dialog-message", "dialog-open", "path-all", "shell-sidecar", "window-close", "window-set-decorations", "window-set-icon", "window-set-position", "window-set-skip-taskbar", "window-start-dragging"] }
+tauri = { version = "1.4", features = ["process-command-api", "dialog-message", "dialog-open", "path-all", "shell-sidecar", "window-close", "window-set-decorations", "window-set-icon", "window-set-position", "window-set-skip-taskbar", "window-start-dragging", "macos-private-api"] }
 image = { version = "0.24", features= ["avif"] }
 infer = "0.13.0"
 tokio = { version = "1", features = ["full"] }

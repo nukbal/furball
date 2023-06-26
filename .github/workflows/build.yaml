@@ -72,14 +72,14 @@ jobs:
 
       - uses: actions/setup-node@v3
         with:
-          node-version: 16
+          node-version: 18
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
       - name: yarn install
         run: yarn install
       - name: build app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

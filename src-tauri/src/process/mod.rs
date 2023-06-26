@@ -11,7 +11,7 @@ mod utils;
 use crate::config::{Config,ProcessMode, DirMode};
 
 #[tauri::command]
-pub async fn process_files(filenames: Vec<String>, conf: Config) -> Result<(), String> {
+pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::Window) -> Result<(), String> {
   let mut handles = vec![];
 
   for filename in filenames {
@@ -23,9 +23,10 @@ pub async fn process_files(filenames: Vec<String>, conf: Config) -> Result<(), S
         let files = meta.files.iter().map(|item| item.path.clone()).collect::<Vec<String>>();
 
         if dir_conf.dir_mode == DirMode::Pdf && utils::is_dir_only_image(meta.files.clone()) {
+          let win = window.clone();
           handles.push(tokio::spawn(async move {
             let path = Path::new(&meta.path);
-            bundle::to_pdf(path, files, dir_conf).await
+            bundle::to_pdf(path, files, dir_conf, &win).await
           }));
           continue;
         }

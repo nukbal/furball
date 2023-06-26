@@ -32,7 +32,7 @@
         "sidecar": true,
         "scope": [
           { "name": "bin/ffmpeg", "sidecar": true },
-          { "name": "bin/upscale", "sidecar": true }
+          { "name": "bin/realesrgan", "sidecar": true }
         ]
       }
     },
@@ -43,7 +43,8 @@
       "deb": {
         "depends": []
       },
-      "externalBin": ["bin/ffmpeg", "bin/upscale"],
+      "externalBin": ["bin/ffmpeg", "bin/realesrgan"],
+      "resources": ["models/*"],
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -63,12 +64,6 @@
       "appimage": {
         "bundleMediaFramework": true
       },
-      "resources": [
-        "models/realesr-animevideov3-x2.bin",
-        "models/realesr-animevideov3-x2.param",
-        "models/realesr-animevideov3-x4.bin",
-        "models/realesr-animevideov3-x4.param"
-      ],
       "shortDescription": "",
       "targets": "all",
       "windows": {

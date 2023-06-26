@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install dependencies macos
+      - name: Install ffmpeg macos
         if: matrix.platform == 'macos-latest'
         run: |
           curl -o ./ffmpeg.7z https://evermeet.cx/ffmpeg/ffmpeg-5.1.7z
@@ -22,7 +22,7 @@ jobs:
           mkdir src-tauri/bin
           mv ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
 
-      - name: Install dependencies windows
+      - name: Install ffmpeg windows
         if: matrix.platform == 'windows-latest'
         run: |
           $VCINSTALLDIR = $(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)

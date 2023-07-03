@@ -11,7 +11,7 @@ export interface ConfigType {
   preserve: boolean;
   width: number;
   quality: number;
-  gif: 'webp' | 'mp4';
+  gif: 'gif' | 'webp' | 'mp4';
   ai: boolean;
 
   dir_mode: 'none' | 'pdf' | 'zip';

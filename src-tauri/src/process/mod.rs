@@ -3,6 +3,7 @@ use std::path::Path;
 use tokio::task::JoinHandle;
 
 mod images;
+mod gif;
 mod videos;
 mod inspect;
 mod bundle;
@@ -89,7 +90,7 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), Str
   let path_str = path.to_str().unwrap().to_string();
   match infer::get_from_path(&path) {
     Ok(nest_infer) => match nest_infer {
-      Some(file) if file.mime_type().starts_with("image") => {
+      Some(file) if file.mime_type().starts_with("image") && file.extension() != "gif" => {
         Ok(tokio::spawn(async move {
           images::optimize_and_save(ImageConfig {
             path: path_str,
@@ -102,10 +103,16 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), Str
           })
         }))
       },
-      Some(file) if file.mime_type().starts_with("video") => {
+      Some(file) if file.extension() == "gif" => {
+        let conf = config.clone();
         Ok(tokio::spawn(async move {
-          // videos::compress(path_str);
-          Ok(())
+          gif::convert(path_str, conf)
+        }))
+      },
+      Some(file) if file.mime_type().starts_with("video") => {
+        let conf = config.clone();
+        Ok(tokio::spawn(async move {
+          videos::compress(path_str, conf)
         }))
       },
       _ => return Err("file is not supported".to_string()),

@@ -24,3 +24,5 @@ declare interface FileType {
 }
 
 declare type StatusType = 'cancel' | 'hover' | 'drop' | 'error' | 'loading';
+
+declare type TWColorType = 'gray' | 'yellow' | 'green' | 'blue' | 'indigo' | 'purple' | 'pink' | 'sky';

@@ -21,6 +21,7 @@ pub enum DirMode {
 #[serde(rename_all = "lowercase")]
 pub enum GifMode {
   #[default]
+  Gif,
   Mp4,
   Webp,
 }

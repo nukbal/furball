@@ -1,52 +1,34 @@
-interface Props<T> {
+import { Show } from 'solid-js';
+
+interface RadioProps {
   class?: string;
-  name: string;
-  value: T;
-  children: React.ReactNode;
-  checked?: boolean;
-  onChange?: (value: T) => void;
+  label: string;
+  active: boolean;
+  onChange: () => void;
+  help?: string;
 }
 
-export default function Radio<T>(props: Props<T>) {
+export default function RadioButton(props: RadioProps) {
   const className = () => {
-
+    const defaultClass = 'relative flex flex-col flex-1 items-start p-3 rounded border border-gray-500';
+    return [
+      defaultClass,
+      props.active ? 'bg-sky-700 border-sky-500 bg-opacity-25' : 'hover:bg-gray-600',
+      props.class,
+    ].filter(Boolean).join(' ');
   };
   return (
-    <label class={[checked ? 'active' : '', className].join(' ')}>
-      <input class="inset-0" type="radio" value={`${value}`} onChange={() => onChange?.(value)} />
-    </label>
+    <button class={className()} onClick={props.onChange} aria-label={props.label}>
+      <span class="font-medium">{props.label}</span>
+      <Show when={props.help}>
+        <small class="mt-2 text-sm">{props.help}</small>
+      </Show>
+      <div
+        class="absolute flex items-center justify-center top-3.5 right-3 rounded-full w-5 h-5 border-gray-500 border"
+        classList={{ 'border-sky-500 bg-sky-500': props.active }}
+      >
+        <Show when={props.active}><i class="w-2.5 h-2.5 bg-gray-200 rounded-full dark:bg-gray-700" /></Show>
+      </div>
+    </button>
   );
 }
-
-// const Input = styled.label`
-//   position: relative;
-//   display: inline-flex;
-//   align-items: center;
-//   justify-content: center;
-//   border-radius: ${s.radius['lg']};
-//   padding: ${s.size['2']} ${s.size['4.5']};
-//   cursor: pointer;
-//   margin: ${s.size['2']} 0;
-//   border: 1px solid ${({ theme }) => theme.gray400};
-
-//   input {
-//     position: absolute;
-//     top: 0;
-//     left: 0;
-//     width: 1px;
-//     height: 1px;
-//     border: none;
-//     overflow: hidden;
-//     clip: rect(0px, 0px, 0px, 0px);
-//   }
-
-//   &:hover {
-//     background: ${({ theme }) => transparentize(0.88, theme.green500)};
-//     border-color: ${({ theme }) => theme.green500};
-//   }
-
-//   &.active {
-//     background: ${({ theme }) => transparentize(0.45, theme.green500)};
-//     border-color: ${({ theme }) => theme.green500};
-//   }
-// `;

@@ -1,4 +1,4 @@
-use std::{path::Path};
+use std::path::{Path, PathBuf};
 use image::{DynamicImage};
 use mozjpeg::{Compress, ColorSpace, ScanMode};
 use std::num::NonZeroU32;
@@ -156,6 +156,56 @@ fn compress_image(img: DynamicImage, quality: f32) -> Result<Vec<u8>, String> {
   let height = img.height() as usize;
 
   compress_buf(data, width, height, quality)
+}
+
+pub fn batch_upscale_images(dir_path: PathBuf, config: ImageConfig) -> Result<PathBuf, String> {
+  let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
+  let out_path = super::utils::get_cache_dir().unwrap().join(job_id);
+
+  if out_path.is_dir() {
+    std::fs::remove_dir_all(&out_path).expect("unable to pre-clear output path");
+  } else if out_path.is_file() {
+    std::fs::remove_file(&out_path).expect("unable to pre-clear output path");
+  }
+
+  std::fs::create_dir(&out_path).expect("unable to create output dir");
+
+  let target_files = std::fs::read_dir(&dir_path).unwrap();
+  let mut scale = "2";
+  for file in target_files {
+    let first_file_path = file.unwrap().path();
+    let first_img = open_image(&first_file_path)
+      .expect(&format!("unable to read first image, {:?}", &first_file_path));
+    if first_img.width() * 2 < config.width as u32 {
+      scale = "4";
+    }
+    break;
+  }
+
+  let output = match tauri::api::process::Command::new_sidecar("realesrgan")
+    .expect("failed to create `realesrgan` binary command")
+    .args(["-i", &dir_path.to_str().unwrap(), "-o", &out_path.to_str().unwrap(), "-n", "realesr-animevideov3", "-s", scale])
+    .output() {
+      Ok(out) => out,
+      Err(err) => return Err(format!("Error executing RealESRGAN Upscaler. \n{:?}", err).to_string()),
+    };
+
+  let generated = std::fs::read_dir(&out_path).expect("unable to read output dir");
+  if generated.count() == 0 {
+    return Err(format!("file does not generated: {:?}", output).to_string());
+  }
+
+  let out_files = std::fs::read_dir(&out_path).unwrap();
+  for file in out_files {
+    let file_path = file.unwrap().path();
+    let (buf, _, _) = optimize_image(ImageConfig {
+      path: file_path.to_str().unwrap().to_owned(),
+      ..config.clone()
+    })?;
+    std::fs::write(&file_path, &buf).unwrap();
+  }
+
+  Ok(out_path)
 }
 
 fn upscale_image(path: &String, scale: u8) -> Result<DynamicImage, String> {

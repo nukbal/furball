@@ -18,3 +18,4 @@ hobby gui app for compressiong media files (mainly image, video) powered by taur
 ## Credits
 
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) for super-resolution
+- [Pretendard](https://github.com/orioncactus/pretendard) for awesome font!

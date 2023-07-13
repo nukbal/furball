@@ -46,6 +46,9 @@ export function setFileData(files: InnerFileType[]) {
     if (file.mime_type === 'dir' && !mode.includes('dir')) {
       return mode.push('dir');
     }
+    if (file.mime_type.includes('pdf')) {
+      return mode.push('image');
+    }
     if (file.mime_type.startsWith('image') && !mode.includes('image')) {
       return mode.push('image');
     }

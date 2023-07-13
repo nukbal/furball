@@ -74,7 +74,12 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
       }
     },
     // x if x == "application/vnd.rar" || x == "application/zip" => {},
-    // x if x == "application/pdf" => {},
+    x if x == "application/pdf" => {
+      if thunbnail_requierd {
+        let str = crate::process::bundle::thumbnail_pdf(file.path.clone())?;
+        file.thumbnail = Some(str);
+      }
+    },
     "dir" => {
       let dir_paths = std::fs::read_dir(&path).unwrap();
       for file_path in dir_paths {
@@ -127,7 +132,7 @@ fn get_file_type(path: &Path) -> Option<infer::Type> {
         || file_type.mime_type().starts_with("video")
         // || file_type.mime_type() == "application/vnd.rar"
         // || file_type.mime_type() == "application/zip"
-        // || file_type.mime_type() == "application/pdf"
+        || file_type.mime_type() == "application/pdf"
       ) => Some(file_type),
       _ => None,
     },

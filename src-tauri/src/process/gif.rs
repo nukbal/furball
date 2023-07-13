@@ -42,7 +42,7 @@ pub fn convert(file_path: String, config: Config) -> Result<(), String> {
   };
   let target_path = base_path.join(format!("out_{}.{}", filename, target_ext));
 
-  let vid_out = match tauri::api::process::Command::new_sidecar("ffmpeg")
+  let _vid_out = match tauri::api::process::Command::new_sidecar("ffmpeg")
     .expect("failed to create `ffmpeg` binary command")
     .args([
       "-i", out_path.clone().join("frame-%d.png").to_str().unwrap(),

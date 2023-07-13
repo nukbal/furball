@@ -17,7 +17,7 @@ export default function Config() {
   const [tab, setTab] = createSignal<ConfigTypes>('default');
   const [form, setForm] = createStore({ ...config });
 
-  const isImg = () => file().mode.includes('image');
+  const isImg = () => file().mode.includes('image') || file().mode.includes('dir');
   const isVideo = () => file().mode.includes('video');
   const isFolder = () => file().mode.includes('dir');
 

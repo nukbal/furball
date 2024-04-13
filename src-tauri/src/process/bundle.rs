@@ -11,7 +11,7 @@ use pdf::object::*;
 use super::images::{ImageConfig, optimize_image, optimize_image_buf};
 use crate::config::{Config, ProcessMode};
 
-pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) -> Result<(), String> {
+pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result<(), String> {
   let mut handles = vec![];
 
   for file_name in files {
@@ -23,12 +23,12 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: Config) -> Result<
       match infer::get_from_path(&path) {
         Ok(inter_type) => match inter_type {
           Some(file) if file.mime_type().starts_with("image") => {
-            let (buf, _, _) = optimize_image(ImageConfig {
+            let (buf, _, _) = optimize_image(&ImageConfig {
               path: file_name.clone(),
-              base_path: conf.path.clone(),
+              base_path: conf.path,
               overwrite: conf.mode == ProcessMode::Overwrite,
               quality: conf.quality,
-              suffix: conf.suffix.clone(),
+              suffix: conf.suffix,
               width: if conf.preserve { 0.0 } else { conf.width },
               ai: conf.ai,
             }).unwrap();
@@ -104,7 +104,7 @@ fn save_to_pdf(name: String, file_path: PathBuf, buffers: Vec<(Vec<u8>, u32, u32
   Ok(())
 }
 
-pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config, window: &tauri::Window) -> Result<(), String> {
+pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: &Config, window: &tauri::Window) -> Result<(), String> {
   let dir_name = dir_path.file_name().unwrap().to_str().unwrap().to_string();
 
   let mut handles = vec![];
@@ -113,7 +113,7 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config, window:
     let conf = config.clone();
     let win = window.clone();
     handles.push(tokio::spawn(async move {
-      let img = optimize_image(ImageConfig {
+      let img = optimize_image(&ImageConfig {
         path: file_name,
         base_path: conf.path.clone(),
         overwrite: conf.mode == ProcessMode::Overwrite,
@@ -140,7 +140,7 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: Config, window:
   save_to_pdf(dir_name, file_path, buffers)
 }
 
-pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: Config, window: &tauri::Window) -> Result<(), String> {
+pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window: &tauri::Window) -> Result<(), String> {
   let dir_name = dir_path.with_extension("").file_name().unwrap().to_str().unwrap().to_string();
   let file = std::fs::File::open(&file_path).unwrap();
 
@@ -168,7 +168,7 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: Config, window:
     let win = window.clone();
 
     handles.push(tokio::spawn(async move {
-      let img = super::images::optimize_image_buf(buf, ImageConfig {
+      let img = super::images::optimize_image_buf(buf, &ImageConfig {
         path: "".to_string(),
         base_path: conf.path.clone(),
         overwrite: conf.mode == ProcessMode::Overwrite,
@@ -195,8 +195,8 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: Config, window:
   save_to_pdf(dir_name, target_path, buffers)
 }
 
-pub fn thumbnail_pdf(filepath: String) -> Result<String, String> {
-  let file = FileOptions::cached().open(&filepath).expect("invalid pdf file");
+pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
+  let file = FileOptions::cached().open(filepath).expect("invalid pdf file");
   let resolver = file.resolver();
 
   if let Some(page) = file.pages().next() {
@@ -257,7 +257,7 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
     let buf = data.to_vec();
 
     handles.push(tokio::spawn(async move {
-      let img = optimize_image_buf(buf, ImageConfig {
+      let img = optimize_image_buf(buf, &ImageConfig {
         path: "".to_string(),
         base_path: conf.path.clone(),
         overwrite: conf.mode == ProcessMode::Overwrite,

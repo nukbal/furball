@@ -5,13 +5,13 @@ use nanoid::nanoid;
 use crate::config::Config;
 use super::images::thumbnail_from_buf;
 
-pub fn thumbnail(file_path: String) -> Result<String, String> {
+pub fn thumbnail(file_path: &String) -> Result<String, String> {
   let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
   let out_path = super::utils::get_cache_dir().unwrap().join(format!("video_thumb_{}.png", job_id));
 
   let _output = match tauri::api::process::Command::new_sidecar("ffmpeg")
     .expect("failed to create `ffmpeg` binary command")
-    .args(["-i", &file_path, "-vframes", "1", out_path.to_str().unwrap()])
+    .args(["-i", file_path, "-vframes", "1", out_path.to_str().unwrap()])
     .output() {
       Ok(out) => out,
       Err(err) => return Err(format!("Error executing FFmpeg. \n{:?}", err).to_string()),

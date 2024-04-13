@@ -42,44 +42,46 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
   let p = std::path::Path::new(&path);
   let filename = p.file_name().unwrap().to_string_lossy().to_string();
 
-  let mut file = FileMeta {
-    path: path.clone(),
-    filename,
-    is_dir: meta.is_dir(),
-    size: meta.len(),
-    ..Default::default()
-  };
-  if file.is_dir {
-    file.mime_type = "dir".to_string();
+  let mime_type = if meta.is_dir() {
+    "dir".to_string()
   } else {
     let Some(kind) = get_file_type(&p) else {
       return Err("unknown type".to_string());
     };
-    file.mime_type = kind.mime_type().to_string();
-  }
+    kind.mime_type().to_string()
+  };
 
+  let mut file = FileMeta {
+    path: path.clone(),
+    filename,
+    mime_type,
+    is_dir: meta.is_dir(),
+    size: meta.len(),
+    ..Default::default()
+  };
+  
   match file.mime_type.as_str() {
     x if x.starts_with("image") => {
       if thunbnail_requierd {
-        let str = crate::process::images::thumbnail(file.path.clone())?;
+        let str = crate::process::images::thumbnail(&file.path)?;
         file.thumbnail = Some(str);
       }
     },
     x if x.starts_with("video") => {
       if thunbnail_requierd {
-        let str = crate::process::videos::thumbnail(file.path.clone())?;
+        let str = crate::process::videos::thumbnail(&file.path)?;
         file.thumbnail = Some(str);
       }
     },
     // x if x == "application/vnd.rar" || x == "application/zip" => {},
     x if x == "application/pdf" => {
       if thunbnail_requierd {
-        let str = crate::process::bundle::thumbnail_pdf(file.path.clone())?;
+        let str = crate::process::bundle::thumbnail_pdf(&file.path)?;
         file.thumbnail = Some(str);
       }
     },
     x if x == "application/zip" => {
-      let zip_file = std::fs::File::open(file.path.clone()).unwrap();
+      let zip_file = std::fs::File::open(&file.path).unwrap();
       let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
       file.is_dir = true;
@@ -113,7 +115,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         if b.is_dir && !a.is_dir {
           return std::cmp::Ordering::Greater;
         }
-        alphanumeric_sort::compare_path(a.path.clone(), b.path.clone())
+        alphanumeric_sort::compare_path(&a.path, &b.path)
       });
     
       if thunbnail_requierd {
@@ -134,7 +136,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
       }
     },
     "dir" => {
-      let dir_paths = std::fs::read_dir(&path).unwrap();
+      let dir_paths = std::fs::read_dir(&file.path).unwrap();
       for file_path in dir_paths {
         let nest_path = file_path.as_ref().unwrap().path();
 
@@ -152,7 +154,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         if b.is_dir && !a.is_dir {
           return std::cmp::Ordering::Greater;
         }
-        alphanumeric_sort::compare_path(a.path.clone(), b.path.clone())
+        alphanumeric_sort::compare_path(&a.path, &b.path)
       });
   
       if file.files.len() > 0 && file.files[0].is_dir == false && thunbnail_requierd {
@@ -162,7 +164,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
           .expect("file type is unknown");
   
         file.thumbnail = generate_thumbnail(
-          first_path.to_str().unwrap().to_string(),
+          &first_path.to_str().unwrap().to_string(),
           first_kind.mime_type(),
         ).unwrap();
       }
@@ -193,7 +195,7 @@ fn get_file_type(path: &Path) -> Option<infer::Type> {
   }
 }
 
-fn generate_thumbnail(path: String, mime: &str) -> Result<Option<String>, String> {
+fn generate_thumbnail(path: &String, mime: &str) -> Result<Option<String>, String> {
   let mut data: Option<String> = None;
   if mime.starts_with("image") {
     let str = crate::process::images::thumbnail(path)?;

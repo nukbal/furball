@@ -8,12 +8,12 @@ hobby gui app for compressiong media files (mainly image, video) powered by taur
 - zip archiving
 - super resolution
 - (unstable) gif conversion (webp, mp4)
-
-## TODO
-- video compression (x264)
 - zip detection
 - pdf detection
 - pdf image conversion
+
+## TODO
+- video compression (x264)
 
 ## Credits
 

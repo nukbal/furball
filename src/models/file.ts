@@ -30,7 +30,7 @@ function loop(files: InnerFileType[], callback?: (file: InnerFileType) => void) 
 }
 
 function collectPath(files: InnerFileType[]) {
-  return files.map((item) => item.path);
+  return files.map((item) => item.path || item.filename);
 }
 
 export function setFileData(files: InnerFileType[]) {
@@ -45,6 +45,12 @@ export function setFileData(files: InnerFileType[]) {
     if (mode.length === 3) return;
     if (file.mime_type === 'dir' && !mode.includes('dir')) {
       return mode.push('dir');
+    }
+    if (file.mime_type.includes('zip')) {
+      return mode.push('dir');
+    }
+    if (file.mime_type.includes('pdf')) {
+      return mode.push('image');
     }
     if (file.mime_type.startsWith('image') && !mode.includes('image')) {
       return mode.push('image');

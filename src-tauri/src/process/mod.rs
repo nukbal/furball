@@ -16,34 +16,41 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
   let mut handles = vec![];
 
   for filename in filenames {
-    let meta = inspect::inspect_file(filename.clone(), false).unwrap();
-    
+    let Ok(meta) = inspect::inspect_file(filename.clone(), false) else {
+      continue;
+    };
+    let cfg = conf.clone();
+    let win = window.clone();
+
     match meta.mime_type.as_str() {
       "dir" => {
-        let dir_conf = conf.clone();
         let files = meta.files.iter().map(|item| item.path.clone()).collect::<Vec<String>>();
 
-        if dir_conf.dir_mode == DirMode::Pdf && utils::is_dir_only_image(meta.files.clone()) {
-          let win = window.clone();
-          handles.push(tokio::spawn(async move {
-            let path = Path::new(&meta.path);
-            bundle::to_pdf(path, files, dir_conf, &win).await
-          }));
-          continue;
-        }
-
-        if dir_conf.dir_mode == DirMode::Zip && utils::is_dir_only_media(meta.files.clone()) {
-          handles.push(tokio::spawn(async move {
-            let path = Path::new(&meta.path);
-            bundle::zip(path, files, dir_conf).await
-          }));
-          continue;
+        if utils::is_dir_only_image(&meta.files) {
+          match cfg.dir_mode {
+            DirMode::Pdf => {
+              handles.push(tokio::spawn(async move {
+                let path = Path::new(&meta.path);
+                bundle::to_pdf(path, files, &cfg, &win).await
+              }));
+              continue;
+            },
+            DirMode::Zip => {
+              handles.push(tokio::spawn(async move {
+                let path = Path::new(&meta.path);
+                bundle::zip(path, files, &cfg).await
+              }));
+              continue;
+            },
+            _ => (),
+          }
         }
 
         for nest_file in meta.files {
+          let c = cfg.clone();
           let nest_path = Path::new(&nest_file.path);
           if !nest_file.is_dir && nest_file.files.len() == 0 {
-            let Ok(handle) = process_file(&nest_path, conf.clone()) else {
+            let Ok(handle) = process_file(&nest_path, c, &win) else {
               continue;
             };
             handles.push(handle);
@@ -53,8 +60,9 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
               if d_nest.is_dir {
                 continue;
               }
+              let cc = c.clone();
               let cur_path = Path::new(&d_nest.path);
-              let Ok(handle) = process_file(&cur_path, conf.clone()) else {
+              let Ok(handle) = process_file(&cur_path, cc, &win) else {
                 continue;
               };
               handles.push(handle);
@@ -62,9 +70,16 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
           }
         }
       },
+      "application/zip" => {
+        let zip_path = Path::new(&filename).to_path_buf();
+        handles.push(tokio::spawn(async move {
+          let path = Path::new(&meta.path);
+          bundle::zip_to(path, zip_path, &cfg, &win).await
+        }));
+      },
       _ => {
         let path = Path::new(&meta.path);
-        match process_file(path, conf.clone()) {
+        match process_file(path, cfg, &win) {
           Ok(handle) => handles.push(handle),
           Err(_err) => continue,
         }
@@ -86,7 +101,7 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
   Ok(())
 }
 
-fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), String>>, String> {
+fn process_file(path: &Path, config: Config, window: &tauri::Window) -> Result<JoinHandle<Result<(), String>>, String> {
   let path_str = path.to_str().unwrap().to_string();
   match infer::get_from_path(&path) {
     Ok(nest_infer) => match nest_infer {
@@ -113,6 +128,16 @@ fn process_file(path: &Path, config: Config) -> Result<JoinHandle<Result<(), Str
         let conf = config.clone();
         Ok(tokio::spawn(async move {
           videos::compress(path_str, conf)
+        }))
+      },
+      Some(file) if file.mime_type() == "application/pdf" => {
+        let conf = config.clone();
+        let file_path = path_str.clone();
+        let win = window.clone();
+
+        Ok(tokio::spawn(async move {
+          let path = Path::new(&file_path);
+          bundle::optimize_pdf(path, conf, &win).await
         }))
       },
       _ => return Err("file is not supported".to_string()),

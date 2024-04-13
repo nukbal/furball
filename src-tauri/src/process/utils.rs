@@ -14,7 +14,7 @@ pub fn get_cache_dir() -> Result<PathBuf, String> {
   Ok(cache_dir)
 }
 
-pub fn is_dir_only_image(files: Vec<FileMeta>) -> bool {
+pub fn is_dir_only_image(files: &Vec<FileMeta>) -> bool {
   let mut result = true;
 
   for file in files {

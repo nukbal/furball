@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use image::DynamicImage;
 use mozjpeg::{Compress, ColorSpace, ScanMode};
 use std::num::NonZeroU32;
@@ -84,10 +84,28 @@ pub fn optimize_image(config: ImageConfig) -> Result<(Vec<u8>, u32, u32), String
   let path = Path::new(&config.path);
   let img = open_image(&path)?;
   let target_width = config.width.clone() as u32;
+
   if img.width() < target_width && target_width > 0 && config.ai {
     let scale = if img.width() * 2 <= target_width { 2 } else { 4 };
-    let upscaled_img = upscale_image(&config.path, scale)?;
-    Ok(optimize(upscaled_img, config.quality, config.width)?)
+    match upscale_image(&config.path, scale) {
+      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width)?),
+      Err(_) => Ok(optimize(img, config.quality, config.width)?),
+    }
+  } else {
+    Ok(optimize(img, config.quality, config.width)?)
+  }
+}
+
+pub fn optimize_image_buf(buf: Vec<u8>, config: ImageConfig) -> Result<(Vec<u8>, u32, u32), String> {
+  let img = image::load_from_memory(&buf).unwrap();
+  let target_width = config.width.clone() as u32;
+
+  if img.width() < target_width && target_width > 0 && config.ai {
+    let scale = if img.width() * 2 <= target_width { 2 } else { 4 };
+    match upscale_image(&config.path, scale) {
+      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width)?),
+      Err(_) => Ok(optimize(img, config.quality, config.width)?),
+    }
   } else {
     Ok(optimize(img, config.quality, config.width)?)
   }
@@ -137,17 +155,15 @@ fn resize(img: &DynamicImage, target_width: f32) -> Result<DynamicImage, String>
 
 fn compress_buf(data: Vec<u8>, width: usize, height: usize, qulity: f32) -> Result<Vec<u8>, String> {
   let mut comp = Compress::new(ColorSpace::JCS_RGB);
+
   comp.set_scan_optimization_mode(ScanMode::AllComponentsTogether);
   comp.set_quality(qulity);
   comp.set_size(width, height);
-  comp.set_mem_dest();
-  comp.start_compress();
 
-  comp.write_scanlines(&data);
+  let mut comp = comp.start_compress(Vec::new()).expect("failed to start compress");
+  comp.write_scanlines(&data).expect("failed to write data");
 
-  comp.finish_compress();
-  let compressed = comp.data_to_vec().expect("failed to compress");
-  Ok(compressed)
+  Ok(comp.finish().expect("failed to compress"))
 }
 
 fn compress_image(img: DynamicImage, quality: f32) -> Result<Vec<u8>, String> {

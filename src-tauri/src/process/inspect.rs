@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{io::Read, path::Path};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileMeta {
   pub path: String,
   filename: String,
@@ -46,10 +46,8 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
     path: path.clone(),
     filename,
     is_dir: meta.is_dir(),
-    files: vec![],
-    mime_type: "".to_string(),
-    thumbnail: None,
     size: meta.len(),
+    ..Default::default()
   };
   if file.is_dir {
     file.mime_type = "dir".to_string();
@@ -80,6 +78,61 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         file.thumbnail = Some(str);
       }
     },
+    x if x == "application/zip" => {
+      let zip_file = std::fs::File::open(file.path.clone()).unwrap();
+      let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+
+      file.is_dir = true;
+
+      for i in 0..archive.len() {
+        let f = archive.by_index(i).unwrap();
+        if f.is_dir() { continue; }
+
+        let name = match f.enclosed_name() {
+          Some(n) => n.to_owned(),
+          _ => continue,
+        };
+
+        let mut fpath = file.path.clone();
+        let filename = name.display().to_string();
+
+        fpath.push_str(&filename);
+    
+        file.files.push(FileMeta {
+          path: fpath,
+          filename: filename,
+          size: f.size(),
+          ..Default::default()
+        });
+      }
+
+      file.files.sort_by(|a, b| {
+        if a.is_dir && !b.is_dir {
+          return std::cmp::Ordering::Less;
+        }
+        if b.is_dir && !a.is_dir {
+          return std::cmp::Ordering::Greater;
+        }
+        alphanumeric_sort::compare_path(a.path.clone(), b.path.clone())
+      });
+    
+      if thunbnail_requierd {
+        let mut img_buf: Vec<u8> = vec![];
+        let mut f = archive.by_name(file.files[0].filename.as_str()).unwrap();
+
+        f.read_to_end(&mut img_buf).unwrap();
+
+        if let Ok(img) = image::load_from_memory(&img_buf) {
+          let width = img.width();
+          let height = img.height();
+          let buf = img.into_rgb8().into_vec();
+
+          if let Ok(b64) = super::images::thumbnail_from_buf(buf, width, height) {
+            file.thumbnail = Some(b64);
+          }
+        }
+      }
+    },
     "dir" => {
       let dir_paths = std::fs::read_dir(&path).unwrap();
       for file_path in dir_paths {
@@ -103,7 +156,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
       });
   
       if file.files.len() > 0 && file.files[0].is_dir == false && thunbnail_requierd {
-        let first_path = p.clone().join(&file.files[0].path);
+        let first_path = p.join(&file.files[0].path);
         let first_kind = infer::get_from_path(&first_path)
           .expect("file read successfully")
           .expect("file type is unknown");
@@ -131,7 +184,7 @@ fn get_file_type(path: &Path) -> Option<infer::Type> {
         (file_type.mime_type().starts_with("image") && file_type.mime_type() != "image/vnd.adobe.photoshop")
         || file_type.mime_type().starts_with("video")
         // || file_type.mime_type() == "application/vnd.rar"
-        // || file_type.mime_type() == "application/zip"
+        || file_type.mime_type() == "application/zip"
         || file_type.mime_type() == "application/pdf"
       ) => Some(file_type),
       _ => None,

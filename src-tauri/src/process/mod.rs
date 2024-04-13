@@ -62,6 +62,14 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
           }
         }
       },
+      "application/zip" => {
+        let dir_conf = conf.clone();
+        let zip_path = Path::new(&filename).to_path_buf();
+        handles.push(tokio::spawn(async move {
+          let path = Path::new(&meta.path);
+          bundle::zip_to(path, zip_path, dir_conf, &win).await
+        }));
+      },
       _ => {
         let path = Path::new(&meta.path);
         match process_file(path, conf.clone(), &win) {

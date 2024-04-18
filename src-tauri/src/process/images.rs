@@ -18,17 +18,33 @@ pub struct ImageConfig {
   pub ai: bool,
 }
 
-fn open_image(path: &Path) -> Result<DynamicImage, String> {
-  let file_name = path.file_name().unwrap().to_string_lossy();
-  match image::open(path) {
-    Ok(buf) => Ok(buf),
-    Err(e) => Err(format!("{}: {}", file_name, e).to_string()),
+fn open_buffer(buf: &[u8]) -> Result<DynamicImage, String> {
+  let Ok(format) = image::guess_format(buf) else {
+    return match image::load_from_memory_with_format(buf, image::ImageFormat::Tga) {
+      Ok(img) => Ok(img),
+      Err(err) => Err(format!("{:?}", err).to_string()),
+    };
+  };
+
+  match image::load_from_memory_with_format(buf, format) {
+    Ok(img) => Ok(img),
+    Err(err) => Err(format!("{:?}", err).to_string()),
   }
 }
 
+fn open_image(path: &Path) -> Result<DynamicImage, String> {
+  let file_name = path.file_name().unwrap().to_string_lossy();
+
+  let buf = match std::fs::read(path) {
+    Ok(f) => f,
+    _ => return Err(format!("unable to open file [{}]", file_name).to_owned()),
+  };
+
+  open_buffer(&buf)
+}
+
 pub fn thumbnail(file_path: &String) -> Result<String, String> {
-  let path = Path::new(file_path);
-  let img = open_image(&path)?;
+  let img = open_image(&Path::new(file_path))?;
   let resized = resize(&img, 250.0)?;
   let compressed = compress_image(resized, 45.0)?;
   let buf = general_purpose::STANDARD.encode(&compressed);
@@ -81,8 +97,7 @@ pub fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
 }
 
 pub fn optimize_image(config: &ImageConfig) -> Result<(Vec<u8>, u32, u32), String> {
-  let path = Path::new(&config.path);
-  let img = open_image(&path)?;
+  let img = open_image(&Path::new(&config.path))?;
   let target_width = config.width as u32;
 
   if img.width() < target_width && target_width > 0 && config.ai {
@@ -97,7 +112,7 @@ pub fn optimize_image(config: &ImageConfig) -> Result<(Vec<u8>, u32, u32), Strin
 }
 
 pub fn optimize_image_buf(buf: Vec<u8>, config: &ImageConfig) -> Result<(Vec<u8>, u32, u32), String> {
-  let img = image::load_from_memory(&buf).unwrap();
+  let img = open_buffer(&buf)?;
   let target_width = config.width as u32;
 
   if img.width() < target_width && target_width > 0 && config.ai {

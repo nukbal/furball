@@ -196,7 +196,18 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window
 }
 
 pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
-  let file = FileOptions::cached().open(filepath).expect("invalid pdf file");
+  let option = pdf::object::ParseOptions {
+    allow_error_in_option: true,
+    allow_invalid_ops: false,
+    allow_missing_endobj: false,
+    allow_xref_error: false,
+  };
+
+  let file = match FileOptions::cached().parse_options(option).open(filepath) {
+    Ok(f) => f,
+    _ => { return Err("invalid pdf file".to_owned()); },
+  };
+
   let resolver = file.resolver();
 
   if let Some(page) = file.pages().next() {
@@ -213,7 +224,9 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
         _ => continue,
       };
 
-      let data = img.image_data(&resolver).expect("failed to read raw_image_data from pdf");
+      let Ok(data) = img.image_data(&resolver) else {
+        continue;
+      };
       img_buf = Some(data.to_vec());
       width = img.width;
       height = img.height;
@@ -231,7 +244,14 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
 }
 
 pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Window) -> Result<(), String> {
-  let file = FileOptions::cached().open(&filepath).unwrap();
+  let option = pdf::object::ParseOptions {
+    allow_error_in_option: true,
+    allow_invalid_ops: false,
+    allow_missing_endobj: false,
+    allow_xref_error: false,
+  };
+
+  let file = FileOptions::cached().parse_options(option).open(&filepath).unwrap();
   let resolver = file.resolver();
 
   let mut images: Vec<_> = vec![];
@@ -251,7 +271,7 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
       _ => continue
     };
 
-    let (data, _) = img.raw_image_data(&resolver).expect("failed to read raw_image_data from pdf");
+    let data = img.image_data(&resolver).expect("failed to read image_data from pdf");
     let conf = config.clone();
     let win = window.clone();
     let buf = data.to_vec();

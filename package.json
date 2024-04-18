@@ -1,7 +1,7 @@
 {
   "name": "furball",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.4.0",
   "type": "module",
   "trustedDependencies": ["@tauri-apps/api", "@tauri-apps/cli"],
   "scripts": {

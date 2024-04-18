@@ -20,7 +20,7 @@ jobs:
 
       - name: install dependencies windows
         if: matrix.platform == 'windows-latest'
-        run:  ./test_script.bat
+        run:  ./scripts/install-deps.bat
         shell: cmd
 
       - uses: actions/cache@v3

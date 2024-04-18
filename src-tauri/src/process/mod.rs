@@ -103,47 +103,51 @@ pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::
 
 fn process_file(path: &Path, config: Config, window: &tauri::Window) -> Result<JoinHandle<Result<(), String>>, String> {
   let path_str = path.to_str().unwrap().to_string();
-  match infer::get_from_path(&path) {
-    Ok(nest_infer) => match nest_infer {
-      Some(file) if file.mime_type().starts_with("image") && file.extension() != "gif" => {
-        Ok(tokio::spawn(async move {
-          images::optimize_and_save(ImageConfig {
-            path: path_str,
-            base_path: config.path,
-            quality: config.quality,
-            suffix: config.suffix,
-            width: if config.preserve { 0.0 } else { config.width },
-            overwrite: config.mode == ProcessMode::Overwrite,
-            ai: config.ai,
-          })
-        }))
-      },
-      Some(file) if file.extension() == "gif" => {
-        let conf = config.clone();
-        Ok(tokio::spawn(async move {
-          gif::convert(path_str, conf)
-        }))
-      },
-      Some(file) if file.mime_type().starts_with("video") => {
-        let conf = config.clone();
-        Ok(tokio::spawn(async move {
-          videos::compress(path_str, conf)
-        }))
-      },
-      Some(file) if file.mime_type() == "application/pdf" => {
-        let conf = config.clone();
-        let file_path = path_str.clone();
-        let win = window.clone();
 
-        Ok(tokio::spawn(async move {
-          let path = Path::new(&file_path);
-          bundle::optimize_pdf(path, conf, &win).await
-        }))
-      },
-      _ => return Err("file is not supported".to_string()),
-    },
-    Err(_err) => return Err("error on processing".to_string()),
+  let Some(mime_type) = utils::get_file_type(&path) else {
+    return Err(format!("file {:?} is not supported", path).to_string());
+  };
+
+  if mime_type.starts_with("image") && !mime_type.contains("gif") {
+    return Ok(tokio::spawn(async move {
+      images::optimize_and_save(ImageConfig {
+        path: path_str,
+        base_path: config.path,
+        quality: config.quality,
+        suffix: config.suffix,
+        width: if config.preserve { 0.0 } else { config.width },
+        overwrite: config.mode == ProcessMode::Overwrite,
+        ai: config.ai,
+      })
+    }));
   }
+
+  if mime_type.contains("gif") {
+    let conf = config.clone();
+    return Ok(tokio::spawn(async move {
+      gif::convert(path_str, conf)
+    }));
+  }
+
+  if mime_type.starts_with("video") {
+    let conf = config.clone();
+    return Ok(tokio::spawn(async move {
+      videos::compress(path_str, conf)
+    }));
+  }
+
+  if mime_type == "application/pdf" {
+    let conf = config.clone();
+    let file_path = path_str.clone();
+    let win = window.clone();
+
+    return Ok(tokio::spawn(async move {
+      let path = Path::new(&file_path);
+      bundle::optimize_pdf(path, conf, &win).await
+    }));
+  }
+
+  Err("error on processing".to_string())
 }
 
 #[tauri::command]

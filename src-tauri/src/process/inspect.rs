@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{io::Read, path::Path};
+use std::io::Read;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileMeta {
@@ -45,10 +45,10 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
   let mime_type = if meta.is_dir() {
     "dir".to_string()
   } else {
-    let Some(kind) = get_file_type(&p) else {
+    let Some(kind) = super::utils::get_file_type(&p) else {
       return Err("unknown type".to_string());
     };
-    kind.mime_type().to_string()
+    kind
   };
 
   let mut file = FileMeta {
@@ -140,7 +140,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
       for file_path in dir_paths {
         let nest_path = file_path.as_ref().unwrap().path();
 
-        if (nest_path.is_dir() && thunbnail_requierd) || get_file_type(nest_path.as_path()).is_some() {
+        if (nest_path.is_dir() && thunbnail_requierd) || super::utils::get_file_type(nest_path.as_path()).is_some() {
           let nested_file = inspect_file(nest_path.to_str().unwrap().to_string(), false).unwrap();
           if nested_file.mime_type != "" {
             file.files.push(nested_file);
@@ -177,22 +177,6 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
   }
 
   Ok(file)
-}
-
-fn get_file_type(path: &Path) -> Option<infer::Type> {
-  match infer::get_from_path(path) {
-    Ok(infer_type) => match infer_type {
-      Some(file_type) if (
-        (file_type.mime_type().starts_with("image") && file_type.mime_type() != "image/vnd.adobe.photoshop")
-        || file_type.mime_type().starts_with("video")
-        // || file_type.mime_type() == "application/vnd.rar"
-        || file_type.mime_type() == "application/zip"
-        || file_type.mime_type() == "application/pdf"
-      ) => Some(file_type),
-      _ => None,
-    },
-    Err(_) => None,
-  }
 }
 
 fn generate_thumbnail(path: &String, mime: &str) -> Result<Option<String>, String> {

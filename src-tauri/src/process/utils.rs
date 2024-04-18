@@ -31,20 +31,29 @@ pub fn is_dir_only_image(files: &Vec<FileMeta>) -> bool {
   result
 }
 
-pub fn is_dir_only_media(files: Vec<FileMeta>) -> bool {
-  let mut result = true;
+pub fn get_file_type(path: &Path) -> Option<String> {
+  let Ok(infer_type) = infer::get_from_path(path) else {
+    return None;
+  };
 
-  for file in files {
-    if file.is_dir {
-      result = false;
-      break;
+  let Some(file_type) = infer_type else {
+    if path.extension().unwrap_or_default() == "tga" {
+      return Some("image/x-tga".to_owned());
+    } else {
+      return None;
     }
-    if file.mime_type.starts_with("image") == false
-      && file.mime_type.starts_with("video") == false {
-      result = false;
-      break;
-    }
+  };
+
+  let mime_type = file_type.mime_type();
+  if 
+    (mime_type.starts_with("image") && mime_type != "image/vnd.adobe.photoshop")
+    || mime_type.starts_with("video")
+    // || file_type.mime_type() == "application/vnd.rar"
+    || mime_type == "application/zip"
+    || mime_type == "application/pdf"
+  {
+    return Some(mime_type.to_owned());
   }
 
-  result
+  None
 }

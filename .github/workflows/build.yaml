@@ -17,7 +17,7 @@ jobs:
       - name: Install ffmpeg macos
         if: matrix.platform == 'macos-latest'
         run: |
-          curl -o ./ffmpeg.7z https://evermeet.cx/ffmpeg/get/zip
+          curl -JL -o ./ffmpeg.7z https://evermeet.cx/ffmpeg/get
           7z x ffmpeg.7z
           mkdir src-tauri/bin
           mv ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin

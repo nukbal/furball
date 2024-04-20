@@ -192,21 +192,15 @@ fn compress_image(img: DynamicImage, quality: f32) -> Result<Vec<u8>, String> {
 pub fn upscale_image(path: &String, scale: u8) -> Result<DynamicImage, String> {
   let cache_dir = super::utils::get_cache_dir().unwrap();
   let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
-  let out_path = cache_dir.join(format!("upscale_{}.png", job_id));
+  let out_path = cache_dir.join(format!("upscale_{}.webp", job_id));
 
-  let model_name = "realesr-animevideov3";
-  // let model_name = "realesrgan-x4plus-anime";
-  let scale_str = format!("{}", scale);
-
-  let args = if model_name.contains("animevideo") {
-    ["-i", &path, "-o", out_path.to_str().unwrap(), "-n", model_name, "-s", &scale_str]
-  } else {
-    ["-i", &path, "-o", out_path.to_str().unwrap(), "-n", model_name, "", ""]
-  };
-
-  let output = match tauri::api::process::Command::new_sidecar("realesrgan")
-    .expect("failed to create `realesrgan` binary command")
-    .args(args)
+  let output = match super::external::upsacler()?
+    .args([
+      "-i", &path,
+      "-o", out_path.to_str().unwrap(),
+      "-n", "realesr-animevideov3",
+      "-s", &format!("{}", scale),
+    ])
     .output() {
       Ok(out) => out,
       Err(err) => return Err(format!("Error executing RealESRGAN Upscaler. \n{:?}", err).to_string()),

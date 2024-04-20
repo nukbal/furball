@@ -8,6 +8,7 @@ mod videos;
 mod inspect;
 mod bundle;
 mod utils;
+mod external;
 
 use crate::config::{Config,ProcessMode, DirMode};
 
@@ -132,7 +133,7 @@ fn process_file(path: &Path, config: Config, window: &tauri::Window) -> Result<J
   if mime_type.starts_with("video") {
     let conf = config.clone();
     return Ok(tokio::spawn(async move {
-      videos::compress(path_str, conf)
+      videos::upscale(path_str, conf)
     }));
   }
 

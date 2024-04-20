@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # install dav1d
-brew install dav1d
+brew install pkg-config dav1d
 
 # install ffmpeg
 curl -JL -o ./ffmpeg.7z https://evermeet.cx/ffmpeg/get
@@ -10,7 +10,6 @@ mkdir src-tauri/bin
 mv ffmpeg src-tauri/bin/ffmpeg-x86_64-apple-darwin
 
 # Add Real-ESRGAN anime models
-
 curl -OL https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip
 7z x realesrgan-ncnn-vulkan-20220424-macos.zip
 mv realesrgan-ncnn-vulkan src-tauri/bin/realesrgan-x86_64-apple-darwin

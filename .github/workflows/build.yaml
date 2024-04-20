@@ -31,19 +31,22 @@ jobs:
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - uses: actions/setup-node@v3
+      - uses: oven-sh/setup-bun@v1
         with:
-          node-version: 18
+          bun-version: latest
+
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - name: yarn install
-        run: yarn install
+
+      - run: bun install
+
       - name: build app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tauriScript: bun
           releaseDraft: true
           tagName: v__VERSION__
           releaseName: "v__VERSION__"

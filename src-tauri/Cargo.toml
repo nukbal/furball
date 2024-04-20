@@ -28,6 +28,7 @@ alphanumeric-sort = "1.5"
 zip = "0.6"
 fast_image_resize = "3"
 pdf = "0.9"
+ffmpeg-next = "7"
 
 mozjpeg = "*"
 oxipng = "*"

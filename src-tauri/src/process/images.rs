@@ -18,7 +18,7 @@ pub struct ImageConfig {
   pub ai: bool,
 }
 
-fn open_buffer(buf: &[u8]) -> Result<DynamicImage, String> {
+pub fn open_buffer(buf: &[u8]) -> Result<DynamicImage, String> {
   let Ok(format) = image::guess_format(buf) else {
     return match image::load_from_memory_with_format(buf, image::ImageFormat::Tga) {
       Ok(img) => Ok(img),
@@ -32,7 +32,7 @@ fn open_buffer(buf: &[u8]) -> Result<DynamicImage, String> {
   }
 }
 
-fn open_image(path: &Path) -> Result<DynamicImage, String> {
+pub fn open_image(path: &Path) -> Result<DynamicImage, String> {
   let file_name = path.file_name().unwrap().to_string_lossy();
 
   let buf = match std::fs::read(path) {

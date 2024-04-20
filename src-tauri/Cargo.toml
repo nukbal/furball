@@ -1,13 +1,13 @@
 [package]
 name = "app"
-version = "0.2.0"
+version = "0.4.0"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
 repository = ""
 default-run = "app"
 edition = "2021"
-rust-version = "1.73"
+rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,7 +17,7 @@ tauri-build = { version = "1.5", features = [] }
 [dependencies]
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "1.6", features = [ "path-all", "process-command-api", "dialog-message", "dialog-open", "shell-sidecar", "window-close", "window-set-decorations", "window-set-icon", "window-set-position", "window-set-skip-taskbar", "window-start-dragging", "macos-private-api"] }
+tauri = { version = "1.6", features = [ "window-set-decorations", "window-set-icon", "dialog-message", "macos-private-api", "window-set-skip-taskbar", "dialog-open", "shell-sidecar", "path-all", "window-close", "window-start-dragging", "window-set-position"] }
 image = { version = "0.25", features = ["default", "avif-native"] }
 infer = "0.15"
 tokio = { version = "1", features = ["full"] }
@@ -28,7 +28,6 @@ alphanumeric-sort = "1.5"
 zip = "0.6"
 fast_image_resize = "3"
 pdf = "0.9"
-ffmpeg-next = "7"
 
 mozjpeg = "*"
 oxipng = "*"

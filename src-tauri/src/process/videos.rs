@@ -1,26 +1,25 @@
 use std::path::{Path, PathBuf};
 
-use nanoid::nanoid;
-
 use crate::config::Config;
 use super::images::thumbnail_from_buf;
 
 pub fn thumbnail(file_path: &String) -> Result<String, String> {
-  let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
-  let out_path = super::utils::get_cache_dir().unwrap().join(format!("video_thumb_{}.png", job_id));
+  let Ok(command) = tauri::api::process::Command::new_sidecar("ffmpeg") else {
+    return Err("failed to create `ffmpeg` binary command".to_owned());
+  };
 
-  let _output = match tauri::api::process::Command::new_sidecar("ffmpeg")
-    .expect("failed to create `ffmpeg` binary command")
-    .args(["-i", file_path, "-vframes", "1", out_path.to_str().unwrap()])
-    .output() {
-      Ok(out) => out,
-      Err(err) => return Err(format!("Error executing FFmpeg. \n{:?}", err).to_string()),
+  let Ok(output) = std::process::Command::from(command)
+    .args(["-i", file_path, "-f", "image2pipe", "-pix_fmt", "rgb24", "-an", "-sn", "-nostats", "-vframes", "1", "-"])
+    .stdout(std::process::Stdio::piped())
+    .output() else {
+      return Err("error to process video".to_owned());
     };
 
-  let thumb = image::open(&out_path).unwrap();
+  let buf = output.stdout.to_vec();
+  let thumb = super::images::open_buffer(&buf).unwrap();
   let b64 = thumbnail_from_buf(thumb.to_rgb8().to_vec(), thumb.width(), thumb.height())?;
 
-  std::fs::remove_file(out_path).unwrap();
+  // std::fs::remove_file(out_path).unwrap();
 
   Ok(b64)
 }

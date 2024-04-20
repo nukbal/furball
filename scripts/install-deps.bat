@@ -19,7 +19,6 @@ powershell -Command "Add-Content $env:GITHUB_ENV 'FFMPEG_DIR=${pwd}\src-tauri\bi
 powershell -Command "Add-Content $env:GITHUB_PATH '${pwd}\src-tauri\bin\bin`n'"
 
 @REM Add Real-ESRGAN anime models
-
 powershell -Command "Invoke-WebRequest 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip' -OutFile realesrgan.zip"
 7z x realesrgan.zip
 mv realesrgan-ncnn-vulkan.exe src-tauri/bin/realesrgan-x86_64-pc-windows-msvc.exe

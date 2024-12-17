@@ -1,6 +1,6 @@
 import { createMemo } from 'solid-js';
 
-import config from 'models/config';
+import config, { type ConfigType } from 'models/config';
 import file from 'models/file';
 
 export default function FooterInfo() {
@@ -11,20 +11,19 @@ export default function FooterInfo() {
     const isFolder = mode.includes('dir');
 
     return [
-      `덮어쓰기: ${config.mode === 'overwrite' ? '○' : '×'}`,
+      config.mode === 'overwrite' ? '덮어쓰기' : '파일유지',
       `저장장소: ${config.path}`,
       config.suffix ? `접미사: ${config.suffix}` : '',
 
       // 이미지의 경우
       ...(isImg ? [
-        `이미지 퀄리티: ${config.quality}`,
-        config.preserve ? `이미지 크기 유지` : `리사이징: ${config.width}px`,
-        `GIF 변환: ${config.gif}`,
-        `AI 스케일링: ${config.ai ? '○' : '×'}`
+        `퀄리티: ${config.quality}`,
+        getImageModeText(config),
+        `GIF -> ${config.gif}`,
       ] : []),
 
       ...(isFolder ? [
-        `폴더 처리: ${config.dir_mode === 'none' ? '개별처리' : `${config.dir_mode.toUpperCase()} 변환`}`,
+        config.dir_mode === 'none' ? '파일개별처리' : `${config.dir_mode.toUpperCase()} 변환`,
       ] : []),
     ].filter(Boolean).join(', ')
   });
@@ -38,4 +37,12 @@ export default function FooterInfo() {
       {configInfo()}
     </abbr>
   );
+}
+
+function getImageModeText(conf: ConfigType) {
+  if (conf.image_mode === 'resize') {
+    return `${conf.ai ? 'AI' : ''}리사이즈: ${conf.width}px`;
+  }
+  if (conf.image_mode === 'shrink') return `축소: 최대${conf.width}px`;
+  return '압축만';
 }

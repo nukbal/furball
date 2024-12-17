@@ -10,7 +10,7 @@ mod bundle;
 mod utils;
 mod external;
 
-use crate::config::{Config,ProcessMode, DirMode};
+use crate::config::{Config, ProcessMode, DirMode};
 
 #[tauri::command]
 pub async fn process_files(filenames: Vec<String>, conf: Config, window: tauri::Window) -> Result<(), String> {
@@ -116,7 +116,8 @@ fn process_file(path: &Path, config: Config, window: &tauri::Window) -> Result<J
         base_path: config.path,
         quality: config.quality,
         suffix: config.suffix,
-        width: if config.preserve { 0.0 } else { config.width },
+        width: config.width,
+        mode: config.image_mode,
         overwrite: config.mode == ProcessMode::Overwrite,
         ai: config.ai,
       })

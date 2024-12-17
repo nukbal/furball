@@ -1,14 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "build": {
-    "beforeBuildCommand": "yarn run build",
-    "beforeDevCommand": "yarn run dev",
+    "beforeBuildCommand": "bun run build",
+    "beforeDevCommand": "bun run dev",
     "devPath": "http://localhost:1420/",
     "distDir": "../dist"
   },
   "package": {
     "productName": "furball",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "tauri": {
     "macOSPrivateApi": true,

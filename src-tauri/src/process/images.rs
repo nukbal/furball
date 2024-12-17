@@ -6,6 +6,7 @@ use fast_image_resize as fr;
 use base64::{Engine as _, engine::general_purpose};
 use nanoid::nanoid;
 
+use crate::config::{ImageMode};
 
 #[derive(Debug)]
 pub struct ImageConfig {
@@ -14,6 +15,7 @@ pub struct ImageConfig {
   pub base_path: String,
   pub quality: f32,
   pub width: f32,
+  pub mode: ImageMode,
   pub overwrite: bool,
   pub ai: bool,
 }
@@ -100,14 +102,14 @@ pub fn optimize_image(config: &ImageConfig) -> Result<(Vec<u8>, u32, u32), Strin
   let img = open_image(&Path::new(&config.path))?;
   let target_width = config.width as u32;
 
-  if img.width() < target_width && target_width > 0 && config.ai {
+  if &config.mode == &ImageMode::Resize && config.ai && img.width() < target_width {
     let scale = if img.width() * 2 <= target_width { 2 } else { 4 };
     match upscale_image(&config.path, scale) {
-      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width)?),
-      Err(_) => Ok(optimize(img, config.quality, config.width)?),
+      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width, &config.mode)?),
+      Err(_) => Ok(optimize(img, config.quality, config.width, &config.mode)?),
     }
   } else {
-    Ok(optimize(img, config.quality, config.width)?)
+    Ok(optimize(img, config.quality, config.width, &config.mode)?)
   }
 }
 
@@ -115,31 +117,32 @@ pub fn optimize_image_buf(buf: Vec<u8>, config: &ImageConfig) -> Result<(Vec<u8>
   let img = open_buffer(&buf)?;
   let target_width = config.width as u32;
 
-  if img.width() < target_width && target_width > 0 && config.ai {
+  if &config.mode == &ImageMode::Resize && config.ai && img.width() < target_width {
     let scale = if img.width() * 2 <= target_width { 2 } else { 4 };
     match upscale_image(&config.path, scale) {
-      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width)?),
-      Err(_) => Ok(optimize(img, config.quality, config.width)?),
+      Ok(upscaled) => Ok(optimize(upscaled, config.quality, config.width, &ImageMode::Resize)?),
+      Err(_) => Ok(optimize(img, config.quality, config.width, &ImageMode::Resize)?),
     }
   } else {
-    Ok(optimize(img, config.quality, config.width)?)
+    Ok(optimize(img, config.quality, config.width, &config.mode)?)
   }
 }
 
-pub fn optimize(img: DynamicImage, quality: f32, width: f32) -> Result<(Vec<u8>, u32, u32), String> {
-  if width == 0.0 {
-    let width = img.width();
-    let height = img.height();
-    let image = compress_image(img, quality)?;
+pub fn optimize(img: DynamicImage, quality: f32, width: f32, mode: &ImageMode) -> Result<(Vec<u8>, u32, u32), String> {
+  let before_width = img.width() as f32;
+
+  if mode == &ImageMode::Resize || (mode == &ImageMode::Shrink && before_width > width) {
+    let next = resize(&img, width)?;
+    let w = next.width();
+    let h = next.height();
+    let image = compress_image(next, quality)?;
   
-    Ok((image, width, height))
+    Ok((image, w, h))
   } else {
-    let img = resize(&img, width)?;
-    let width = img.width();
-    let height = img.height();
+    let w = img.width();
+    let h = img.height();
     let image = compress_image(img, quality)?;
-  
-    Ok((image, width, height))
+    Ok((image, w, h))
   }
 }
 

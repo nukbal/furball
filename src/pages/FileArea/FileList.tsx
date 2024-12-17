@@ -1,11 +1,10 @@
-import { Show, For, Switch, Match, createMemo } from 'solid-js';
+import { Show, For } from 'solid-js';
 
 import FolderIcon from 'components/Icons/Folder';
 import FilmIcon from 'components/Icons/Film';
 import PhotoIcon from 'components/Icons/Photo';
 
-import file, { fileData } from 'models/file';
-import nonNullable from 'utils/nonNullable';
+import file from 'models/file';
 import parseFileSize from 'utils/parseFileSize';
 import { Dynamic } from 'solid-js/web';
 
@@ -22,7 +21,7 @@ function FileItem(p: ItemProps) {
     if (p.nest === 2) return 'pl-8';
     return '';
   };
-  const maxWidth = () => `${258 - (12 * (p.nest || 0))}px`;
+  const maxWidth = () => `${254 - (12 * (p.nest || 0))}px`;
 
   return (
     <Show when={target()}>

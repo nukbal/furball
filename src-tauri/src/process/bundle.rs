@@ -29,7 +29,8 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
               overwrite: conf.mode == ProcessMode::Overwrite,
               quality: conf.quality,
               suffix: conf.suffix,
-              width: if conf.preserve { 0.0 } else { conf.width },
+              width: conf.width,
+              mode: conf.image_mode,
               ai: conf.ai,
             }).unwrap();
   
@@ -119,7 +120,8 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: &Config, window
         overwrite: conf.mode == ProcessMode::Overwrite,
         quality: conf.quality,
         suffix: conf.suffix.clone(),
-        width: if conf.preserve { 0.0 } else { conf.width },
+        width: conf.width,
+        mode: conf.image_mode,
         ai: conf.ai,
       }).unwrap();
       win.emit("progress", "done").unwrap();
@@ -174,7 +176,8 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window
         overwrite: conf.mode == ProcessMode::Overwrite,
         quality: conf.quality,
         suffix: conf.suffix.clone(),
-        width: if conf.preserve { 0.0 } else { conf.width },
+        width: conf.width,
+        mode: conf.image_mode,
         ai: conf.ai,
       }).unwrap();
       win.emit("progress", "done").unwrap();
@@ -283,7 +286,8 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
         overwrite: conf.mode == ProcessMode::Overwrite,
         quality: conf.quality,
         suffix: conf.suffix.clone(),
-        width: if conf.preserve { 0.0 } else { conf.width },
+        width: conf.width,
+        mode: conf.image_mode,
         ai: conf.ai,
       }).unwrap();
       win.emit("progress", "done").unwrap();

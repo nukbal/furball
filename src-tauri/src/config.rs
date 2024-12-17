@@ -26,6 +26,15 @@ pub enum GifMode {
   Webp,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Default, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageMode {
+  #[default]
+  Preserve,
+  Resize,
+  Shrink,
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct Config {
   // general
@@ -34,7 +43,7 @@ pub struct Config {
   pub suffix: String,
 
   // images
-  pub preserve: bool,
+  pub image_mode: ImageMode,
   pub width: f32,
   pub quality: f32,
   pub gif: GifMode,

@@ -8,7 +8,7 @@ export interface ConfigType {
   suffix: string;
 
   // images
-  preserve: boolean;
+  image_mode: 'preserve' | 'resize' | 'shrink';
   width: number;
   quality: number;
   gif: 'gif' | 'webp' | 'mp4';
@@ -22,7 +22,7 @@ export const defaultValues = {
   path: '',
   suffix: '',
 
-  preserve: false,
+  image_mode: 'preserve',
   width: 1440,
   quality: 88,
   gif: 'mp4',
@@ -40,6 +40,10 @@ function parseCacheString(str: string | null) {
     // @ts-ignore
     res[key] = value !== undefined ? value : res[key];
   });
+  // migration from 0.4.0 -> 0.5.0
+  if ('preserve' in json && typeof json.preserve === 'boolean') {
+    res.image_mode = json.preserve ? 'preserve' : 'resize';
+  }
   return res;
 }
 

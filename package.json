@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "test": "bun wiptest",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

@@ -46,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tauriScript: bun
+          tauriScript: "bun tauri"
           releaseDraft: true
           tagName: v__VERSION__
           releaseName: "v__VERSION__"

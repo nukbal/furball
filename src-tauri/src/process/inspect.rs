@@ -28,9 +28,9 @@ pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
     match handle {
       Ok(val) => match val {
         Ok(file) => if file.mime_type != "" { result.push(file); },
-        Err(e) => { return Err(e.to_string()); },
+        Err(e) => return Err(e.to_string()),
       },
-      Err(e) => { return Err(e.to_string()); },
+      Err(e) => return Err(e.to_string()),
     }
   }
 
@@ -124,12 +124,8 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
 
         f.read_to_end(&mut img_buf).unwrap();
 
-        if let Ok(img) = image::load_from_memory(&img_buf) {
-          let width = img.width();
-          let height = img.height();
-          let buf = img.into_rgb8().into_vec();
-
-          if let Ok(b64) = super::images::thumbnail_from_buf(buf, width, height) {
+        if let Ok(img) = super::images::open_buffer(&img_buf) {
+          if let Ok(b64) = super::images::thumbnail_from_buf(img) {
             file.thumbnail = Some(b64);
           }
         }

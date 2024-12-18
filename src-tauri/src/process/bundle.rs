@@ -8,7 +8,7 @@ use printpdf::{
 use pdf::file::FileOptions;
 use pdf::object::*;
 
-use super::images::{ImageConfig, optimize_image, optimize_image_buf};
+use super::images::{optimize_image, optimize_image_buf_size, ImageBuf, ImageConfig};
 use crate::config::{Config, ProcessMode};
 
 pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result<(), String> {
@@ -20,31 +20,38 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
       let path = Path::new(&file_name);
       let name = path.file_name().unwrap().to_str().unwrap();
   
-      match infer::get_from_path(&path) {
-        Ok(inter_type) => match inter_type {
-          Some(file) if file.mime_type().starts_with("image") => {
-            let (buf, _, _) = optimize_image(&ImageConfig {
-              path: file_name.clone(),
-              base_path: conf.path,
-              overwrite: conf.mode == ProcessMode::Overwrite,
-              quality: conf.quality,
-              suffix: conf.suffix,
-              width: conf.width,
-              mode: conf.image_mode,
-              ai: conf.ai,
-            }).unwrap();
-  
-            Some((buf, name.to_string()))
+      let Ok(infer_type) = infer::get_from_path(&path) else {
+        return None;
+      };
+      let Some(file) = infer_type else {
+        return None;
+      };
+      if file.mime_type().starts_with("image") {
+        let img = match optimize_image(&ImageConfig {
+          path: file_name.clone(),
+          base_path: conf.path,
+          overwrite: conf.mode == ProcessMode::Overwrite,
+          quality: conf.quality,
+          suffix: conf.suffix,
+          width: conf.width,
+          mode: conf.image_mode,
+          ai: conf.ai,
+        }) {
+          Ok(img) => img,
+          Err(err) => {
+            println!("{}", err);
+            return None;
           },
-          Some(file) if file.mime_type().starts_with("video") => {
-            // TODO: add video compression
-            let f = BufReader::new(File::open(&path).unwrap());
-            Some((f.buffer().to_vec(), name.to_string()))
-          },
-          _ => None,
-        },
-        Err(_) => None,
+        };
+
+        return Some((img.buf, name.to_string()));
       }
+      if file.mime_type().starts_with("video") {
+        // TODO: add video compression
+        let f = BufReader::new(File::open(&path).unwrap());
+        return Some((f.buffer().to_vec(), name.to_string()));
+      }
+      None
     }));
   }
 
@@ -74,23 +81,23 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
   Ok(())
 }
 
-fn save_to_pdf(name: String, file_path: PathBuf, buffers: Vec<(Vec<u8>, u32, u32)>) -> Result<(), String> {
+fn save_to_pdf(name: String, file_path: PathBuf, buffers: Vec<ImageBuf>) -> Result<(), String> {
   let doc = PdfDocument::empty(name.as_str());
 
-  for (buf, width, height) in buffers {
+  for item in buffers {
     let (page, layer) = doc.add_page(
-      Px(width as usize).into_pt(300.0).into(),
-      Px(height as usize).into_pt(300.0).into(),
+      Px(item.width as usize).into_pt(300.0).into(),
+      Px(item.height as usize).into_pt(300.0).into(),
       "",
     );
 
     let image = Image::from(ImageXObject {
-      width: Px(width as usize),
-      height: Px(height as usize),
+      width: Px(item.width as usize),
+      height: Px(item.height as usize),
       color_space: ColorSpace::Rgb,
       bits_per_component: ColorBits::Bit8,
       interpolate: false,
-      image_data: buf,
+      image_data: item.buf,
       image_filter: Some(ImageFilter::DCT),
       clipping_bbox: None,
       smask: None,
@@ -237,10 +244,12 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
       break;
     }
 
-    if let Some(buf) = img_buf {
-      let b64 = super::images::thumbnail_from_buf(buf, width, height).expect("failed to generate thumbnail from pdf");
-      return Ok(b64);
-    }
+    let Some(buf) = img_buf else {
+      return Err("no images found".to_string());
+    };
+    let target = super::images::open_buffer_size(buf, width, height)?;
+    let b64 = super::images::thumbnail_from_buf(target)?;
+    return Ok(b64);
   }
 
   Err("no images found".to_owned())
@@ -278,9 +287,11 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
     let conf = config.clone();
     let win = window.clone();
     let buf = data.to_vec();
+    let width = img.width;
+    let height = img.height;
 
     handles.push(tokio::spawn(async move {
-      let img = optimize_image_buf(buf, &ImageConfig {
+      let img = optimize_image_buf_size(buf, width, height, &ImageConfig {
         path: "".to_string(),
         base_path: conf.path.clone(),
         overwrite: conf.mode == ProcessMode::Overwrite,
@@ -300,7 +311,7 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
     buffers.push(buf.unwrap());
   }
 
-  let dir_name = filepath.file_name().unwrap().to_str().unwrap().to_string();
+  let dir_name = filepath.with_extension("").file_name().unwrap().to_str().unwrap().to_string();
   let file_path = match config.mode {
     ProcessMode::Overwrite => filepath.with_extension("pdf"),
     ProcessMode::Path => Path::new(&config.path).join(format!("{}.pdf", dir_name)),

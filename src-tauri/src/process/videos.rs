@@ -20,7 +20,7 @@ pub fn thumbnail(file_path: &String) -> Result<String, String> {
     };
 
   let thumb = super::images::open_buffer(&out.stdout).unwrap();
-  let b64 = thumbnail_from_buf(thumb.to_rgb8().to_vec(), thumb.width(), thumb.height())?;
+  let b64 = thumbnail_from_buf(thumb)?;
 
   Ok(b64)
 }

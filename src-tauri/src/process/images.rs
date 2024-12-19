@@ -32,16 +32,6 @@ pub fn open_buffer(buf: &[u8]) -> Result<ImageBuf, String> {
   Ok(ImageBuf { buf: img.to_rgb8().to_vec(), width: img.width(), height: img.height(), pixel: PixelType::U8x3 })
 }
 
-pub fn open_buffer_size(buf: Vec<u8>, width: u32, height: u32) -> Result<ImageBuf, String> {
-  let Ok(img) = open_buffer(&buf) else {
-    let Ok(img) = Image::from_vec_u8(width, height, buf, PixelType::U8x3) else {
-      return Err("unable to read image file".to_string());
-    };
-    return Ok(ImageBuf { buf: img.buffer().to_vec(), width: img.width(), height: img.height(), pixel: PixelType::U8x3 })
-  };
-  Ok(img)
-}
-
 pub fn open_image(path: &Path) -> Result<ImageBuf, String> {
   if let Ok(img) = image::open(path) {
     return Ok(ImageBuf { buf: img.to_rgb8().to_vec(), width: img.width(), height: img.height(), pixel: PixelType::U8x3 });
@@ -109,8 +99,7 @@ pub fn optimize_image_buf(buf: Vec<u8>, config: &ImageConfig) -> Result<ImageBuf
   process_image(img, config)
 }
 
-pub fn optimize_image_buf_size(buf: Vec<u8>, w: u32, h: u32, config: &ImageConfig) -> Result<ImageBuf, String> {
-  let img = open_buffer_size(buf, w, h)?;
+pub fn optimize_image_buf_size(img: ImageBuf, config: &ImageConfig) -> Result<ImageBuf, String> {
   process_image(img, config)
 }
 
@@ -137,8 +126,9 @@ fn resize(img: ImageBuf, target_width: f32) -> Result<ImageBuf, String> {
     (target_width as u32, (target_width * ratio) as u32)
   };
 
-  let Ok(from) = Image::from_vec_u8(img.width, img.height, img.buf, img.pixel) else {
-    return Err("failed to convert image buffer on resizeing".to_string());
+  let from = match Image::from_vec_u8(img.width, img.height, img.buf, img.pixel) {
+    Ok(o) => o,
+    Err(e) => return Err(format!("unable to read image file {:?}", e).to_string()),
   };
   let mut target = Image::new(w, h, img.pixel);
   let mut resizer = fr::Resizer::new();
@@ -146,12 +136,15 @@ fn resize(img: ImageBuf, target_width: f32) -> Result<ImageBuf, String> {
   if let Err(err) = resizer.resize(&from, &mut target, None) {
     return Err(format!("failed to resize image: {:?}", err));
   };
-
   Ok(ImageBuf { buf: target.buffer().to_vec(), width: target.width(), height: target.height(), pixel: target.pixel_type() })
 }
 
 fn compress_buf(img: ImageBuf, qulity: f32) -> Result<Vec<u8>, String> {
-  let mut comp = Compress::new(ColorSpace::JCS_RGB);
+  let cs = match img.pixel {
+    PixelType::U8 => ColorSpace::JCS_GRAYSCALE,
+    _ => ColorSpace::JCS_RGB,
+  };
+  let mut comp = Compress::new(cs);
 
   comp.set_scan_optimization_mode(ScanMode::AllComponentsTogether);
   comp.set_quality(qulity);
@@ -190,7 +183,6 @@ pub fn upscale_image(path: &String, scale: u8) -> Result<ImageBuf, String> {
     };
 
   if !out_path.is_file() {
-    println!("file does not generated: {:?}", output);
     return Err(format!("file does not generated: {:?}", output).to_string());
   }
 
@@ -213,9 +205,6 @@ fn read_from_buf(raw: &[u8]) -> Result<DynamicImage, String> {
     };
     return Ok(img);
   };
-
-  // TGA or HEIC
-  println!("other codecs like tga? {}", raw.len());
 
   Err("failed to guess format on reading buffer".to_string())
 }

@@ -67,7 +67,6 @@ pub fn upscale(file_path: String, config: Config) -> Result<(), String> {
     };
 
   if !out_path.is_file() {
-    println!("file does not generated: {:?}", output);
     std::fs::remove_dir_all(dir_path).expect("failed to clean cache after converting video");
     return Err(format!("file does not generated: {:?}", output).to_string());
   }

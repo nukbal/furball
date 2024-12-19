@@ -1,9 +1,9 @@
 use std::{fs::File, io::{BufReader, BufWriter, Read, Write}, path::Path};
 use std::path::PathBuf;
 use std::string::String;
+use fast_image_resize::PixelType;
 use printpdf::{
-  PdfDocument, ImageXObject, Image, Px, ColorSpace, ColorBits, ImageFilter,
-  ImageTransform,
+  PdfDocument, ImageXObject, Image, Px, ColorBits, ImageFilter, ImageTransform, ColorSpace,
 };
 use pdf::file::FileOptions;
 use pdf::object::*;
@@ -94,7 +94,10 @@ fn save_to_pdf(name: String, file_path: PathBuf, buffers: Vec<ImageBuf>) -> Resu
     let image = Image::from(ImageXObject {
       width: Px(item.width as usize),
       height: Px(item.height as usize),
-      color_space: ColorSpace::Rgb,
+      color_space: match item.pixel {
+        PixelType::U8 => ColorSpace::Greyscale,
+        _ => ColorSpace::Rgb,
+      },
       bits_per_component: ColorBits::Bit8,
       interpolate: false,
       image_data: item.buf,
@@ -223,9 +226,7 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
   if let Some(page) = file.pages().next() {
     let p = page.unwrap();
     let resources = p.resources().unwrap();
-    let mut img_buf = None;
-    let mut width = 0;
-    let mut height = 0;
+    let mut ibuf = ImageBuf { pixel: PixelType::U8x3, buf: vec![], width: 0, height: 0 };
 
     for (_, &r) in resources.xobjects.iter() {
       let obj = resolver.get(r).unwrap();
@@ -237,18 +238,20 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
       let Ok(data) = img.image_data(&resolver) else {
         continue;
       };
-      img_buf = Some(data.to_vec());
-      width = img.width;
-      height = img.height;
-
+      ibuf.buf = data.to_vec();
+      ibuf.width = img.width;
+      ibuf.height = img.height;
+      ibuf.pixel = match img.color_space {
+        Some(pdf::object::ColorSpace::DeviceGray) => PixelType::U8,
+        _ => PixelType::U8x3,
+      };
       break;
     }
 
-    let Some(buf) = img_buf else {
+    if ibuf.buf.len() == 0 {
       return Err("no images found".to_string());
-    };
-    let target = super::images::open_buffer_size(buf, width, height)?;
-    let b64 = super::images::thumbnail_from_buf(target)?;
+    }
+    let b64 = super::images::thumbnail_from_buf(ibuf)?;
     return Ok(b64);
   }
 
@@ -283,15 +286,23 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
       _ => continue
     };
 
-    let data = img.image_data(&resolver).expect("failed to read image_data from pdf");
+    let Ok(data) = img.image_data(&resolver) else {
+      continue;
+    };
     let conf = config.clone();
     let win = window.clone();
-    let buf = data.to_vec();
-    let width = img.width;
-    let height = img.height;
+    let buf = ImageBuf {
+      buf: data.to_vec(),
+      width: img.width,
+      height: img.height,
+      pixel: match img.color_space {
+        Some(pdf::object::ColorSpace::DeviceGray) => PixelType::U8,
+        _ => PixelType::U8x3,
+      },
+    };
 
     handles.push(tokio::spawn(async move {
-      let img = optimize_image_buf_size(buf, width, height, &ImageConfig {
+      let img = optimize_image_buf_size(buf, &ImageConfig {
         path: "".to_string(),
         base_path: conf.path.clone(),
         overwrite: conf.mode == ProcessMode::Overwrite,

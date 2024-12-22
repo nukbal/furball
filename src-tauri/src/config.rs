@@ -28,6 +28,15 @@ pub enum GifMode {
 
 #[derive(Serialize, Deserialize, PartialEq, Default, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
+pub enum ImageType {
+  #[default]
+  JPG,
+  AVIF,
+  WEBP,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Default, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum ImageMode {
   #[default]
   Preserve,

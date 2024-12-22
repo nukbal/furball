@@ -64,7 +64,7 @@ export function get() {
   return state;
 }
 
-export async function setConfig(value: ConfigType) {
+export function setConfig(value: ConfigType) {
   localStorage.setItem('config', JSON.stringify(value));
   setState(value);
 }

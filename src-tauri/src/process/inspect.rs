@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::Read;
+use async_recursion::async_recursion;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileMeta {
@@ -9,22 +10,21 @@ pub struct FileMeta {
   pub mime_type: String,
   thumbnail: Option<String>,
   pub files: Vec<FileMeta>,
+  pub len: u32,
   size: u64,
 }
 
 pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
   let mut handles = vec![];
+  let mut result = vec![];
 
   for path in paths {
-    handles.push(tokio::spawn(async move {
-      inspect_file(path, true)
+    handles.push(tauri::async_runtime::spawn(async move {
+      inspect_file(path, true).await
     }));
   }
 
-  let res = futures::future::join_all(handles).await;
-  let mut result = vec![];
-
-  for handle in res {
+  for handle in futures::future::join_all(handles).await {
     match handle {
       Ok(val) => match val {
         Ok(file) => if file.mime_type != "" { result.push(file); },
@@ -34,10 +34,15 @@ pub async fn file_meta(paths: Vec<String>) -> Result<String, String> {
     }
   }
 
+  if result.len() == 0 {
+    return Err("empty files".to_string());
+  }
+
   Ok(serde_json::to_string(&result).unwrap())
 }
 
-pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, String> {
+#[async_recursion]
+pub async fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, String> {
   let meta = std::fs::metadata(&path).unwrap();
   let p = std::path::Path::new(&path);
   let filename = p.file_name().unwrap().to_string_lossy().to_string();
@@ -59,27 +64,28 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
     size: meta.len(),
     ..Default::default()
   };
-  
+
   match file.mime_type.as_str() {
     x if x.starts_with("image") => {
       if thunbnail_requierd {
-        let str = crate::process::images::thumbnail(&file.path)?;
+        let str = super::images::thumbnail(&file.path)?;
         file.thumbnail = Some(str);
       }
-    },
+    }
     x if x.starts_with("video") => {
       if thunbnail_requierd {
-        let str = crate::process::videos::thumbnail(&file.path)?;
+        let str = super::videos::thumbnail(&file.path).await?;
         file.thumbnail = Some(str);
       }
-    },
+    }
     // x if x == "application/vnd.rar" || x == "application/zip" => {},
     x if x == "application/pdf" => {
       if thunbnail_requierd {
-        let str = crate::process::bundle::thumbnail_pdf(&file.path)?;
+        let str = super::bundle::thumbnail_pdf(&file.path)?;
+        file.len = super::bundle::pdf_len(&file.path)?;
         file.thumbnail = Some(str);
       }
-    },
+    }
     x if x == "application/zip" => {
       let zip_file = std::fs::File::open(&file.path).unwrap();
       let mut archive = zip::ZipArchive::new(zip_file).unwrap();
@@ -88,7 +94,9 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
 
       for i in 0..archive.len() {
         let f = archive.by_index(i).unwrap();
-        if f.is_dir() { continue; }
+        if f.is_dir() {
+          continue;
+        }
 
         let name = match f.enclosed_name() {
           Some(n) => n.to_owned(),
@@ -99,7 +107,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         let filename = name.display().to_string();
 
         fpath.push_str(&filename);
-    
+
         file.files.push(FileMeta {
           path: fpath,
           filename: filename,
@@ -117,7 +125,7 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         }
         alphanumeric_sort::compare_path(&a.path, &b.path)
       });
-    
+
       if thunbnail_requierd {
         let mut img_buf: Vec<u8> = vec![];
         let mut f = archive.by_name(file.files[0].filename.as_str()).unwrap();
@@ -130,14 +138,16 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
           }
         }
       }
-    },
+    }
     "dir" => {
       let dir_paths = std::fs::read_dir(&file.path).unwrap();
       for file_path in dir_paths {
         let nest_path = file_path.as_ref().unwrap().path();
 
-        if (nest_path.is_dir() && thunbnail_requierd) || super::utils::get_file_type(nest_path.as_path()).is_some() {
-          let nested_file = inspect_file(nest_path.to_str().unwrap().to_string(), false).unwrap();
+        if (nest_path.is_dir() && thunbnail_requierd)
+          || super::utils::get_file_type(nest_path.as_path()).is_some()
+        {
+          let nested_file = inspect_file(nest_path.to_str().unwrap().to_string(), false).await?;
           if nested_file.mime_type != "" {
             file.files.push(nested_file);
           }
@@ -152,36 +162,36 @@ pub fn inspect_file(path: String, thunbnail_requierd: bool) -> Result<FileMeta, 
         }
         alphanumeric_sort::compare_path(&a.path, &b.path)
       });
-  
+
       if file.files.len() > 0 && file.files[0].is_dir == false && thunbnail_requierd {
         let first_path = p.join(&file.files[0].path);
         let first_kind = infer::get_from_path(&first_path)
           .expect("file read successfully")
           .expect("file type is unknown");
-  
+
         file.thumbnail = generate_thumbnail(
           &first_path.to_str().unwrap().to_string(),
           first_kind.mime_type(),
-        ).unwrap();
+        ).await?;
       }
       // exclude empty dir
       if file.files.len() == 0 {
         file.mime_type = "".to_string();
       }
-    },
+    }
     _ => (),
   }
 
   Ok(file)
 }
 
-fn generate_thumbnail(path: &String, mime: &str) -> Result<Option<String>, String> {
+async fn generate_thumbnail(path: &String, mime: &str) -> Result<Option<String>, String> {
   let mut data: Option<String> = None;
   if mime.starts_with("image") {
-    let str = crate::process::images::thumbnail(path)?;
+    let str = super::images::thumbnail(path)?;
     data = Some(str);
   } else if mime.starts_with("video") {
-    let str = crate::process::videos::thumbnail(path)?;
+    let str = super::videos::thumbnail(path).await?;
     data = Some(str);
   }
 

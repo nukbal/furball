@@ -1,51 +1,52 @@
 [package]
-name = "app"
+name = "furball"
 version = "0.5.0"
-description = "A Tauri App"
+description = "optimize media file"
 authors = ["you"]
-license = ""
-repository = ""
-default-run = "app"
 edition = "2021"
-rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "furball_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "1.6", features = [ "window-set-decorations", "window-set-icon", "dialog-message", "macos-private-api", "window-set-skip-taskbar", "dialog-open", "shell-sidecar", "path-all", "window-close", "window-start-dragging", "window-set-position"] }
+tokio = { version = "1", features = ["full"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+
 image = { version = "0.25", features = ["default", "avif-native"] }
 infer = "0.15"
-tokio = { version = "1", features = ["full"] }
 base64 = "0.22"
-window-vibrancy = "0.4"
 futures = "0.3"
 alphanumeric-sort = "1.5"
 zip = "0.6"
 fast_image_resize = { version = "5", features = ["image"] }
 pdf = "0.9"
-
 mozjpeg = "*"
 oxipng = "*"
 printpdf = "0.7"
 pdf-extract = "0.7.10"
 nanoid = "0.4.0"
+async-recursion = "1"
 
-[features]
-# by default Tauri runs in production mode
-# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
-default = ["custom-protocol"]
-# this feature is used used for production builds where `devPath` points to the filesystem
-# DO NOT remove this
-custom-protocol = ["tauri/custom-protocol"]
+[profile.dev]
+incremental = true # Compile your binary in smaller steps.
 
 [profile.release]
-strip = true
-panic = "abort" # Strip expensive panic clean-up logic
-codegen-units = 1 # Compile crates one after another so the compiler can optimize better
-lto = true # Enables link to optimizations
-opt-level = "s" # Optimize for binary size
+codegen-units = 1 # Allows LLVM to perform better optimization.
+lto = true # Enables link-time-optimizations.
+opt-level = "s" # Prioritizes small binary size. Use `3` if you prefer speed.
+panic = "abort" # Higher performance by disabling panic handlers.
+strip = true # Ensures debug symbols are removed.

@@ -1,12 +1,17 @@
-use std::{fs::File, io::{BufReader, BufWriter, Read, Write}, path::Path};
-use std::path::PathBuf;
-use std::string::String;
 use fast_image_resize::PixelType;
-use printpdf::{
-  PdfDocument, ImageXObject, Image, Px, ColorBits, ImageFilter, ImageTransform, ColorSpace,
-};
 use pdf::file::FileOptions;
 use pdf::object::*;
+use printpdf::{
+  ColorBits, ColorSpace, Image, ImageFilter, ImageTransform, ImageXObject, PdfDocument, Px,
+};
+use std::path::PathBuf;
+use std::string::String;
+use std::{
+  fs::File,
+  io::{BufReader, BufWriter, Read, Write},
+  path::Path,
+};
+use tauri::Emitter;
 
 use super::images::{optimize_image, optimize_image_buf_size, ImageBuf, ImageConfig};
 use crate::config::{Config, ProcessMode};
@@ -16,10 +21,10 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
 
   for file_name in files {
     let conf = config.clone();
-    handles.push(tokio::spawn(async move {
+    handles.push(tauri::async_runtime::spawn(async move {
       let path = Path::new(&file_name);
       let name = path.file_name().unwrap().to_str().unwrap();
-  
+
       let Ok(infer_type) = infer::get_from_path(&path) else {
         return None;
       };
@@ -36,12 +41,12 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
           width: conf.width,
           mode: conf.image_mode,
           ai: conf.ai,
-        }) {
+        }).await {
           Ok(img) => img,
           Err(err) => {
             println!("{}", err);
             return None;
-          },
+          }
         };
 
         return Some((img.buf, name.to_string()));
@@ -71,10 +76,10 @@ pub async fn zip(dir_path: &Path, files: Vec<String>, config: &Config) -> Result
   let file = File::create(&file_path).unwrap();
   let mut zip = zip::ZipWriter::new(file);
   for (buf, name) in buffers {
-    zip.start_file(name.clone(), Default::default())
+    zip
+      .start_file(name.clone(), Default::default())
       .expect(&format!("start_file: {}", name));
-    zip.write_all(&buf)
-      .expect(&format!("write_all: {}", name));
+    zip.write_all(&buf).expect(&format!("write_all: {}", name));
   }
 
   zip.finish().expect("unable to zip");
@@ -106,24 +111,33 @@ fn save_to_pdf(name: String, file_path: PathBuf, buffers: Vec<ImageBuf>) -> Resu
       smask: None,
     });
 
-    image.add_to_layer(doc.get_page(page).get_layer(layer), ImageTransform {
-      ..Default::default()
-    });
+    image.add_to_layer(
+      doc.get_page(page).get_layer(layer),
+      ImageTransform {
+        ..Default::default()
+      },
+    );
   }
 
-  doc.save(&mut BufWriter::new(File::create(&file_path).unwrap())).unwrap();
+  doc
+    .save(&mut BufWriter::new(File::create(&file_path).unwrap()))
+    .unwrap();
   Ok(())
 }
 
-pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: &Config, window: &tauri::Window) -> Result<(), String> {
+pub async fn to_pdf(
+  dir_path: &Path,
+  files: Vec<String>,
+  config: &Config,
+) -> Result<(), String> {
   let dir_name = dir_path.file_name().unwrap().to_str().unwrap().to_string();
 
   let mut handles = vec![];
 
   for file_name in files {
     let conf = config.clone();
-    let win = window.clone();
-    handles.push(tokio::spawn(async move {
+    let app = crate::app_handle().clone();
+    handles.push(tauri::async_runtime::spawn(async move {
       let img = optimize_image(&ImageConfig {
         path: file_name,
         base_path: conf.path.clone(),
@@ -133,8 +147,8 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: &Config, window
         width: conf.width,
         mode: conf.image_mode,
         ai: conf.ai,
-      }).unwrap();
-      win.emit("progress", "done").unwrap();
+      }).await.unwrap();
+      app.emit("progress", "done").unwrap();
       img
     }));
   }
@@ -152,8 +166,18 @@ pub async fn to_pdf(dir_path: &Path, files: Vec<String>, config: &Config, window
   save_to_pdf(dir_name, file_path, buffers)
 }
 
-pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window: &tauri::Window) -> Result<(), String> {
-  let dir_name = dir_path.with_extension("").file_name().unwrap().to_str().unwrap().to_string();
+pub async fn zip_to(
+  dir_path: &Path,
+  file_path: PathBuf,
+  config: &Config,
+) -> Result<(), String> {
+  let dir_name = dir_path
+    .with_extension("")
+    .file_name()
+    .unwrap()
+    .to_str()
+    .unwrap()
+    .to_string();
   let file = std::fs::File::open(&file_path).unwrap();
 
   let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -162,34 +186,39 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window
 
   for i in 0..archive.len() {
     let mut f = archive.by_index(i).unwrap();
-    if f.is_dir() { continue; }
+    if f.is_dir() {
+      continue;
+    }
 
     let mut buf = vec![];
     f.read_to_end(&mut buf).unwrap();
-    if !infer::is_image(&buf) { continue; }
+    if !infer::is_image(&buf) {
+      continue;
+    }
 
     images.push((f.name().to_owned(), buf));
   }
 
-  images.sort_by(|(a, _), (b, _)| {
-    alphanumeric_sort::compare_str(a.clone(), b.clone())
-  });
+  images.sort_by(|(a, _), (b, _)| alphanumeric_sort::compare_str(a.clone(), b.clone()));
 
   for (_, buf) in images {
     let conf = config.clone();
-    let win = window.clone();
+    let win = crate::app_handle().clone();
 
-    handles.push(tokio::spawn(async move {
-      let img = super::images::optimize_image_buf(buf, &ImageConfig {
-        path: "".to_string(),
-        base_path: conf.path.clone(),
-        overwrite: conf.mode == ProcessMode::Overwrite,
-        quality: conf.quality,
-        suffix: conf.suffix.clone(),
-        width: conf.width,
-        mode: conf.image_mode,
-        ai: conf.ai,
-      }).unwrap();
+    handles.push(tauri::async_runtime::spawn(async move {
+      let img = super::images::optimize_image_buf(
+        buf,
+        &ImageConfig {
+          path: "".to_string(),
+          base_path: conf.path.clone(),
+          overwrite: conf.mode == ProcessMode::Overwrite,
+          quality: conf.quality,
+          suffix: conf.suffix.clone(),
+          width: conf.width,
+          mode: conf.image_mode,
+          ai: conf.ai,
+        },
+      ).await.unwrap();
       win.emit("progress", "done").unwrap();
       img
     }));
@@ -208,6 +237,20 @@ pub async fn zip_to(dir_path: &Path, file_path: PathBuf, config: &Config, window
   save_to_pdf(dir_name, target_path, buffers)
 }
 
+pub fn pdf_len(filepath: &String) -> Result<u32, String> {
+  let option = pdf::object::ParseOptions {
+    allow_error_in_option: true,
+    allow_invalid_ops: false,
+    allow_missing_endobj: false,
+    allow_xref_error: false,
+  };
+
+  let Ok(file) = FileOptions::cached().parse_options(option).open(filepath) else {
+    return Err("invalid pdf file".to_owned());
+  };
+  Ok(file.num_pages())
+}
+
 pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
   let option = pdf::object::ParseOptions {
     allow_error_in_option: true,
@@ -216,9 +259,8 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
     allow_xref_error: false,
   };
 
-  let file = match FileOptions::cached().parse_options(option).open(filepath) {
-    Ok(f) => f,
-    _ => { return Err("invalid pdf file".to_owned()); },
+  let Ok(file) = FileOptions::cached().parse_options(option).open(filepath) else {
+    return Err("invalid pdf file".to_owned());
   };
 
   let resolver = file.resolver();
@@ -226,7 +268,12 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
   if let Some(page) = file.pages().next() {
     let p = page.unwrap();
     let resources = p.resources().unwrap();
-    let mut ibuf = ImageBuf { pixel: PixelType::U8x3, buf: vec![], width: 0, height: 0 };
+    let mut ibuf = ImageBuf {
+      pixel: PixelType::U8x3,
+      buf: vec![],
+      width: 0,
+      height: 0,
+    };
 
     for (_, &r) in resources.xobjects.iter() {
       let obj = resolver.get(r).unwrap();
@@ -258,7 +305,7 @@ pub fn thumbnail_pdf(filepath: &String) -> Result<String, String> {
   Err("no images found".to_owned())
 }
 
-pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Window) -> Result<(), String> {
+pub async fn optimize_pdf(filepath: &Path, config: Config) -> Result<(), String> {
   let option = pdf::object::ParseOptions {
     allow_error_in_option: true,
     allow_invalid_ops: false,
@@ -266,7 +313,9 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
     allow_xref_error: false,
   };
 
-  let file = FileOptions::cached().parse_options(option).open(&filepath).unwrap();
+  let Ok(file) = FileOptions::cached().parse_options(option).open(filepath) else {
+    return Err("invalid pdf file".to_owned());
+  };
   let resolver = file.resolver();
 
   let mut images: Vec<_> = vec![];
@@ -275,22 +324,26 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
   for page in file.pages() {
     let p = page.unwrap();
     let resources = p.resources().unwrap();
-    images.extend(resources.xobjects.iter().map(|(_name, &r)| resolver.get(r).unwrap())
-        .filter(|o| matches!(**o, XObject::Image(_)))
+    images.extend(
+      resources
+        .xobjects
+        .iter()
+        .map(|(_name, &r)| resolver.get(r).unwrap())
+        .filter(|o| matches!(**o, XObject::Image(_))),
     );
   }
 
   for (_, o) in images.iter().enumerate() {
     let img = match **o {
       XObject::Image(ref im) => im,
-      _ => continue
+      _ => continue,
     };
 
     let Ok(data) = img.image_data(&resolver) else {
       continue;
     };
     let conf = config.clone();
-    let win = window.clone();
+    let win = crate::app_handle().clone();
     let buf = ImageBuf {
       buf: data.to_vec(),
       width: img.width,
@@ -301,17 +354,20 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
       },
     };
 
-    handles.push(tokio::spawn(async move {
-      let img = optimize_image_buf_size(buf, &ImageConfig {
-        path: "".to_string(),
-        base_path: conf.path.clone(),
-        overwrite: conf.mode == ProcessMode::Overwrite,
-        quality: conf.quality,
-        suffix: conf.suffix.clone(),
-        width: conf.width,
-        mode: conf.image_mode,
-        ai: conf.ai,
-      }).unwrap();
+    handles.push(tauri::async_runtime::spawn(async move {
+      let img = optimize_image_buf_size(
+        buf,
+        &ImageConfig {
+          path: "".to_string(),
+          base_path: conf.path.clone(),
+          overwrite: conf.mode == ProcessMode::Overwrite,
+          quality: conf.quality,
+          suffix: conf.suffix.clone(),
+          width: conf.width,
+          mode: conf.image_mode,
+          ai: conf.ai,
+        },
+      ).await.unwrap();
       win.emit("progress", "done").unwrap();
       img
     }));
@@ -322,7 +378,13 @@ pub async fn optimize_pdf(filepath: &Path, config: Config, window: &tauri::Windo
     buffers.push(buf.unwrap());
   }
 
-  let dir_name = filepath.with_extension("").file_name().unwrap().to_str().unwrap().to_string();
+  let dir_name = filepath
+    .with_extension("")
+    .file_name()
+    .unwrap()
+    .to_str()
+    .unwrap()
+    .to_string();
   let file_path = match config.mode {
     ProcessMode::Overwrite => filepath.with_extension("pdf"),
     ProcessMode::Path => Path::new(&config.path).join(format!("{}.pdf", dir_name)),

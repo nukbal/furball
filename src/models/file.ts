@@ -4,7 +4,7 @@ export const fileData = new Map<string, FileType>();
 
 type FileProcessMode = 'image' | 'video' | 'dir';
 
-interface FileStateType {
+export interface FileStateType {
   mode: FileProcessMode[];
   paths: string[];
   data: Map<string, FileType>;

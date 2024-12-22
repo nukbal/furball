@@ -1,16 +1,34 @@
-use tauri::api::process::Command;
+use std::ffi::OsStr;
 
-pub fn upsacler() -> Result<Command, String> {
-  match Command::new_sidecar("realesrgan") {
-    Ok(cmd) => Ok(cmd),
-    _ => return Err("failed to create `realesrgan` binary command".to_owned()),
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::Output;
+
+pub async fn upsacler<I, S>(args: I) -> Result<Output, String> where
+  I: IntoIterator<Item = S>,
+  S: AsRef<OsStr>,
+{
+  let app = crate::app_handle();
+  let Ok(cmd) = app.shell().sidecar("realesrgan") else {
+    return Err("failed to create `realesrgan` binary command".to_string());
+  };
+  let out = cmd.args(args).output().await;
+  match out {
+    Ok(out) => Ok(out),
+    Err(e) => Err(format!("{:?}", e).to_string()),
   }
 }
 
-
-pub fn ffmpeg() -> Result<Command, String> {
-  match Command::new_sidecar("ffmpeg") {
-    Ok(cmd) => Ok(cmd),
-    _ => return Err("failed to create `ffmpeg` binary command".to_owned()),
+pub async fn ffmpeg<I, S>(args: I) -> Result<Output, String> where
+I: IntoIterator<Item = S>,
+S: AsRef<OsStr>,
+{
+  let app = crate::app_handle();
+  let Ok(cmd) = app.shell().sidecar("ffmpeg") else {
+    return Err("failed to create `ffmpeg` binary command".to_string());
+  };
+  let out = cmd.args(args).output().await;
+  match out {
+    Ok(out) => Ok(out),
+    Err(e) => Err(format!("{:?}", e).to_string()),
   }
 }

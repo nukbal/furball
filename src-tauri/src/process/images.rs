@@ -1,9 +1,9 @@
-use std::path::Path;
-use mozjpeg::{Compress, ColorSpace, ScanMode};
-use image::DynamicImage;
+use base64::{engine::general_purpose, Engine as _};
 use fast_image_resize::{self as fr, images::Image, PixelType};
-use base64::{Engine as _, engine::general_purpose};
+use image::DynamicImage;
+use mozjpeg::{ColorSpace, Compress, ScanMode};
 use nanoid::nanoid;
+use std::path::Path;
 
 use crate::config::ImageMode;
 
@@ -29,12 +29,22 @@ pub struct ImageBuf {
 
 pub fn open_buffer(buf: &[u8]) -> Result<ImageBuf, String> {
   let img = read_from_buf(buf)?;
-  Ok(ImageBuf { buf: img.to_rgb8().to_vec(), width: img.width(), height: img.height(), pixel: PixelType::U8x3 })
+  Ok(ImageBuf {
+    buf: img.to_rgb8().to_vec(),
+    width: img.width(),
+    height: img.height(),
+    pixel: PixelType::U8x3,
+  })
 }
 
 pub fn open_image(path: &Path) -> Result<ImageBuf, String> {
   if let Ok(img) = image::open(path) {
-    return Ok(ImageBuf { buf: img.to_rgb8().to_vec(), width: img.width(), height: img.height(), pixel: PixelType::U8x3 });
+    return Ok(ImageBuf {
+      buf: img.to_rgb8().to_vec(),
+      width: img.width(),
+      height: img.height(),
+      pixel: PixelType::U8x3,
+    });
   };
 
   let file_name = path.file_name().unwrap().to_string_lossy();
@@ -47,7 +57,7 @@ pub fn open_image(path: &Path) -> Result<ImageBuf, String> {
 
 pub fn thumbnail_from_buf(img: ImageBuf) -> Result<String, String> {
   let resized = resize(img, 250.0)?;
-  let optimized = compress_buf(resized, 65.0)?;
+  let optimized = compress_jpg(resized, 65.0)?;
   Ok(general_purpose::STANDARD.encode(&optimized))
 }
 
@@ -56,11 +66,16 @@ pub fn thumbnail(file_path: &String) -> Result<String, String> {
   thumbnail_from_buf(img)
 }
 
-pub fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
+pub async fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
   let path = Path::new(&config.path);
-  let filename = path.with_extension("").file_name().unwrap().to_string_lossy().to_string();
+  let filename = path
+    .with_extension("")
+    .file_name()
+    .unwrap()
+    .to_string_lossy()
+    .to_string();
 
-  let img = optimize_image(&config)?;
+  let img = optimize_image(&config).await?;
 
   let base_path = if config.overwrite {
     path.parent().unwrap().to_path_buf()
@@ -74,45 +89,65 @@ pub fn optimize_and_save(config: ImageConfig) -> Result<(), String> {
   Ok(())
 }
 
-fn process_image(img: ImageBuf, config: &ImageConfig) -> Result<ImageBuf, String> {
+async fn process_image(img: ImageBuf, config: &ImageConfig) -> Result<ImageBuf, String> {
   let target_width = config.width as u32;
   let width = img.width;
 
   if &config.mode == &ImageMode::Resize && config.ai && width < target_width {
     let scale = if width * 2 <= target_width { 2 } else { 4 };
-    match upscale_image(&config.path, scale) {
-      Ok(next) => Ok(optimize(next, config.quality, config.width, &ImageMode::Resize)?),
-      Err(_) => Ok(optimize(img, config.quality, config.width, &ImageMode::Resize)?),
+    match upscale_image(&config.path, scale).await {
+      Ok(next) => Ok(optimize(
+        next,
+        config.quality,
+        config.width,
+        &ImageMode::Resize,
+      )?),
+      Err(_) => Ok(optimize(
+        img,
+        config.quality,
+        config.width,
+        &ImageMode::Resize,
+      )?),
     }
   } else {
     Ok(optimize(img, config.quality, config.width, &config.mode)?)
   }
 }
 
-pub fn optimize_image(config: &ImageConfig) -> Result<ImageBuf, String> {
+pub async fn optimize_image(config: &ImageConfig) -> Result<ImageBuf, String> {
   let img = open_image(&Path::new(&config.path))?;
-  process_image(img, config)
+  process_image(img, config).await
 }
 
-pub fn optimize_image_buf(buf: Vec<u8>, config: &ImageConfig) -> Result<ImageBuf, String> {
+pub async fn optimize_image_buf(buf: Vec<u8>, config: &ImageConfig) -> Result<ImageBuf, String> {
   let img = open_buffer(&buf)?;
-  process_image(img, config)
+  process_image(img, config).await
 }
 
-pub fn optimize_image_buf_size(img: ImageBuf, config: &ImageConfig) -> Result<ImageBuf, String> {
-  process_image(img, config)
+pub async fn optimize_image_buf_size(img: ImageBuf, config: &ImageConfig) -> Result<ImageBuf, String> {
+  process_image(img, config).await
 }
 
-pub fn optimize(img: ImageBuf, quality: f32, target_width: f32, mode: &ImageMode) -> Result<ImageBuf, String> {
-  let mut res = ImageBuf { width: img.width, height: img.height, buf: Vec::new(), pixel: img.pixel };
+pub fn optimize(
+  img: ImageBuf,
+  quality: f32,
+  target_width: f32,
+  mode: &ImageMode,
+) -> Result<ImageBuf, String> {
+  let mut res = ImageBuf {
+    width: img.width,
+    height: img.height,
+    buf: Vec::new(),
+    pixel: img.pixel,
+  };
 
   if mode == &ImageMode::Resize || (mode == &ImageMode::Shrink && img.width > target_width as u32) {
     let next: ImageBuf = resize(img, target_width)?;
     res.width = next.width;
     res.height = next.height;
-    res.buf = compress_buf(next, quality)?;
+    res.buf = compress_jpg(next, quality)?;
   } else {
-    res.buf = compress_buf(img, quality)?;
+    res.buf = compress_jpg(img, quality)?;
   }
   Ok(res)
 }
@@ -136,10 +171,15 @@ fn resize(img: ImageBuf, target_width: f32) -> Result<ImageBuf, String> {
   if let Err(err) = resizer.resize(&from, &mut target, None) {
     return Err(format!("failed to resize image: {:?}", err));
   };
-  Ok(ImageBuf { buf: target.buffer().to_vec(), width: target.width(), height: target.height(), pixel: target.pixel_type() })
+  Ok(ImageBuf {
+    buf: target.buffer().to_vec(),
+    width: target.width(),
+    height: target.height(),
+    pixel: target.pixel_type(),
+  })
 }
 
-fn compress_buf(img: ImageBuf, qulity: f32) -> Result<Vec<u8>, String> {
+fn compress_jpg(img: ImageBuf, qulity: f32) -> Result<Vec<u8>, String> {
   let cs = match img.pixel {
     PixelType::U8 => ColorSpace::JCS_GRAYSCALE,
     _ => ColorSpace::JCS_RGB,
@@ -165,22 +205,21 @@ fn compress_buf(img: ImageBuf, qulity: f32) -> Result<Vec<u8>, String> {
   Ok(buf)
 }
 
-pub fn upscale_image(path: &String, scale: u8) -> Result<ImageBuf, String> {
+pub async fn upscale_image(path: &String, scale: u8) -> Result<ImageBuf, String> {
   let cache_dir = super::utils::get_cache_dir().unwrap();
   let job_id = nanoid!(15, &nanoid::alphabet::SAFE);
   let out_path = cache_dir.join(format!("upscale_{}.webp", job_id));
 
-  let output = match super::external::upsacler()?
-    .args([
-      "-i", &path,
-      "-o", out_path.to_str().unwrap(),
-      "-n", "realesr-animevideov3",
-      "-s", &format!("{}", scale),
-    ])
-    .output() {
-      Ok(out) => out,
-      Err(err) => return Err(format!("Error executing RealESRGAN Upscaler. \n{:?}", err).to_string()),
-    };
+  let output = super::external::upsacler([
+    "-i",
+    &path,
+    "-o",
+    out_path.to_str().unwrap(),
+    "-n",
+    "realesr-animevideov3",
+    "-s",
+    &format!("{}", scale),
+  ]).await?;
 
   if !out_path.is_file() {
     return Err(format!("file does not generated: {:?}", output).to_string());
@@ -200,10 +239,10 @@ fn read_from_buf(raw: &[u8]) -> Result<DynamicImage, String> {
   };
 
   if let Ok(format) = image::guess_format(raw) {
-    let Ok(img) = image::load_from_memory_with_format(raw, format) else {
-      return Err("unable to decode image buffer".to_string());
+    return match image::load_from_memory_with_format(raw, format) {
+      Ok(img) => Ok(img),
+      Err(e) => Err(format!("unable to decode image buffer: {:?}", e).to_string()),
     };
-    return Ok(img);
   };
 
   Err("failed to guess format on reading buffer".to_string())

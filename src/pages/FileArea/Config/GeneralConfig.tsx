@@ -1,5 +1,5 @@
 import type { SetStoreFunction } from 'solid-js/store';
-import { open } from '@tauri-apps/api/dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 
 import Field, { HorizontalField } from 'components/Form/Field';
 import Button from 'components/Button';

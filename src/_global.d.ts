@@ -20,6 +20,7 @@ declare interface FileType {
   status: 'loading' | 'done' | 'error';
   files: string[];
   thumbnail: string | null;
+  len: number;
   size: number;
 }
 

@@ -1,31 +1,29 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::Config;
 use super::images::thumbnail_from_buf;
-use super::external::{ffmpeg, upsacler};
+use crate::config::Config;
 
-pub fn thumbnail(file_path: &String) -> Result<String, String> {
+pub async fn thumbnail(file_path: &String) -> Result<String, String> {
+  let out = super::external::ffmpeg([
+    "-i", file_path,
+    "-f", "image2pipe",
+    "-pix_fmt", "rgb24",
+    "-an", "-sn", "-nostats",
+    "-vframes", "1",
+    "-",
+  ]).await?;
 
-  let Ok(out) = std::process::Command::from(ffmpeg()?)
-    .args([
-      "-i", file_path,
-      "-f", "image2pipe",
-      "-pix_fmt", "rgb24",
-      "-an", "-sn", "-nostats",
-      "-vframes", "1",
-      "-"
-    ])
-    .output() else {
-      return Err("error to process video".to_owned());
-    };
+  if out.status.success() == false {
+    return Err("process is failed".to_string());
+  }
 
-  let thumb = super::images::open_buffer(&out.stdout).unwrap();
+  let thumb = super::images::open_buffer(&out.stdout)?;
   let b64 = thumbnail_from_buf(thumb)?;
 
   Ok(b64)
 }
 
-pub fn frames(file_path: String) -> Result<PathBuf, String> {
+pub async fn frames(file_path: String) -> Result<PathBuf, String> {
   let input_path = Path::new(&file_path);
   let filename = input_path.file_name().unwrap();
   let out_path = super::utils::get_cache_dir().unwrap().join(filename);
@@ -37,55 +35,53 @@ pub fn frames(file_path: String) -> Result<PathBuf, String> {
   }
   std::fs::create_dir(&out_path).expect("unable to create dir");
 
-  let _output = match ffmpeg()?
-    .args(["-i", &file_path, "-vsync", "0", out_path.clone().join("frame-%d.jpg").to_str().unwrap()])
-    .output() {
-      Ok(out) => out,
-      Err(err) => return Err(format!("Error executing FFmpeg. \n{:?}", err).to_string()),
-    };
+  let _output = super::external::ffmpeg([
+    "-i",
+    &file_path,
+    "-vsync",
+    "0",
+    out_path.clone().join("frame-%d.jpg").to_str().unwrap(),
+  ]).await?;
 
   Ok(out_path)
 }
 
-pub fn upscale(file_path: String, config: Config) -> Result<(), String> {
-  let dir_path = frames(file_path.clone())?;
+pub async fn upscale(file_path: String, config: Config) -> Result<(), String> {
+  let dir_path = frames(file_path.clone()).await?;
   let from_path = dir_path.clone();
   let filename = from_path.file_name().unwrap().to_str().unwrap();
-  let out_path = super::utils::get_cache_dir().unwrap().join(format!("out_{}", filename));
+  let out_path = super::utils::get_cache_dir()
+    .unwrap()
+    .join(format!("out_{}", filename));
 
-  let output = match upsacler()?
-    .args([
-      "-i", &from_path.to_str().unwrap(),
-      "-o", &from_path.to_str().unwrap(),
-      "-n", "realesr-animevideov3",
-      "-s", "2",
-      "-f", "jpg",
-    ])
-    .output() {
-      Ok(out) => out,
-      Err(err) => return Err(format!("Error executing RealESRGAN Upscaler. \n{:?}", err).to_string()),
-    };
+  let output = super::external::upsacler([
+    "-i",
+    &from_path.to_str().unwrap(),
+    "-o",
+    &from_path.to_str().unwrap(),
+    "-n",
+    "realesr-animevideov3",
+    "-s",
+    "2",
+    "-f",
+    "jpg",
+  ]).await?;
 
   if !out_path.is_file() {
     std::fs::remove_dir_all(dir_path).expect("failed to clean cache after converting video");
     return Err(format!("file does not generated: {:?}", output).to_string());
   }
 
-  let _output = match ffmpeg()?
-    .args([
-      "-i", dir_path.clone().join("frame-%d.jpg").to_str().unwrap(),
-      "-i", &file_path,
-      "-map 0:v:0 -map 1:a:0 -c:a copy -c:v libx264 -r 23.98 -pix_fmt yuv420p",
-      "-o", &config.path,
-    ])
-    .output() {
-      Ok(out) => out,
-      Err(err) => {
-        std::fs::remove_dir_all(dir_path).expect("failed to clean cache after converting video");
-        return Err(format!("Error executing FFmpeg. \n{:?}", err).to_string());
-      },
-    };
-  
+  let _output = super::external::ffmpeg([
+    "-i",
+    dir_path.clone().join("frame-%d.jpg").to_str().unwrap(),
+    "-i",
+    &file_path,
+    "-map 0:v:0 -map 1:a:0 -c:a copy -c:v libx264 -r 23.98 -pix_fmt yuv420p",
+    "-o",
+    &config.path,
+  ]).await?;
+
   std::fs::remove_dir_all(dir_path).expect("failed to clean cache after converting video");
   Ok(())
 }

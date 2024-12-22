@@ -1,5 +1,5 @@
-import { Switch, Match, createEffect } from 'solid-js';
-import { appWindow } from '@tauri-apps/api/window';
+import { Switch, Match, createEffect, Show } from 'solid-js';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 import CloseIcon from 'components/Icons/Close';
 import Button from 'components/Button';
@@ -11,9 +11,9 @@ import EmptyStatus from './EmptyStatus';
 import FileArea from './FileArea';
 import Credit, { CreditButton } from './Credit';
 import DropArea from './DropArea';
-import ConfigArea from './Config';
 
 export default function App() {
+  const window = getCurrentWindow();
 
   createEffect(() => {
     if (!isDarkMode()) {
@@ -23,9 +23,18 @@ export default function App() {
     }
   });
 
+  createEffect(() => {
+    const val = page();
+    if (val === 'file') {
+      window.setSize(new LogicalSize(880, 650));
+    } else {
+      window.setSize(new LogicalSize(580, 325));
+    }
+  });
+
   const page = () => {
     const val = mode();
-    if (file().data.size > 0 && val !== 'credit' && val !== 'config') return 'file';
+    if (file().data.size > 0 && val !== 'credit') return 'file';
     if (val === 'hover' || val === 'loading') return 'cancel';
     return val;
   };
@@ -39,18 +48,17 @@ export default function App() {
         <Match when={page() === 'file'}>
           <FileArea />
         </Match>
-        <Match when={page() === 'config'}>
-          <ConfigArea />
-        </Match>
         <Match when={page() === 'credit'}>
           <Credit />
         </Match>
       </Switch>
       <DropArea />
-      <Button class="absolute right-2 top-2" onClick={appWindow.close}>
+      <Button class="absolute right-2 top-2" onClick={window.close}>
         <CloseIcon class="h-6 w-6" />
       </Button>
-      <CreditButton />
+      <Show when={page() !== 'file'}>
+        <CreditButton />
+      </Show>
     </div>
   );
 }

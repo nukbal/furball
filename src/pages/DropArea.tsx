@@ -1,7 +1,6 @@
 import { onMount, onCleanup, Switch, Match } from 'solid-js';
-import { message } from '@tauri-apps/api/dialog';
-import { UnlistenFn } from '@tauri-apps/api/event';
-import { appWindow } from '@tauri-apps/api/window';
+import { message } from '@tauri-apps/plugin-dialog';
+import { type UnlistenFn, listen } from '@tauri-apps/api/event';
 
 import Spinner from 'components/Spinner';
 import IconBase from 'components/Icons/Base';
@@ -10,34 +9,34 @@ import mode, { setPageMode } from 'models/mode';
 
 import getFileMeta from '../utils/getFileMeta';
 
-export default function DropArea() {
-  let unsub: UnlistenFn;
+interface DragDropEvent {
+  paths: string[];
+  position: { x: number; y: number; };
+  id: number;
+}
 
-  onMount(() => {
-    appWindow.onFileDropEvent((e) => {
-      if (e.payload.type === 'drop') {
-        const paths = e.payload.paths;
-        setPageMode('loading');
-        getFileMeta(paths)
-          .then((res) => {
-            if (res.length) {
-              setFileData(res);
-            }
-            setPageMode('cancel');
-          }).catch((e) => {
-            message(e, { type: 'error', title: '에러' });
-            setPageMode('cancel');
-          });
-      } else {
-        setPageMode(e.payload.type);
+export default function DropArea() {
+  let list: UnlistenFn[] = [];
+
+  onMount(async () => {
+    list.push(await listen('tauri://drag-enter', () => setPageMode('hover')));
+    list.push(await listen('tauri://drag-leave', () => setPageMode('cancel')));
+    list.push(await listen<DragDropEvent>('tauri://drag-drop', async (e) => {
+      setPageMode('loading');
+      try {
+        const res = await getFileMeta(e.payload.paths)
+        if (res.length) {
+          setFileData(res);
+        }
+      } catch (e: any) {
+        message(e, { kind: 'error', title: '에러' });
       }
-    }).then((cb) => {
-      unsub = cb;
-    });
+      setPageMode('cancel');
+    }));
   });
 
   onCleanup(() => {
-    unsub?.();
+    list.forEach((callback) => callback());
   });
 
   return (

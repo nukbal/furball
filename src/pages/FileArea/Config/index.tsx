@@ -1,40 +1,30 @@
 import { createSignal, Show, Switch, Match } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import type { SetStoreFunction } from 'solid-js/store';
 
 import file from 'models/file';
-import config, { setConfig } from 'models/config';
-import ChevronLeft from 'components/Icons/ChevronLeft';
+import type { ConfigType } from 'models/config';
 import Button from 'components/Button';
-import { setPageMode } from 'models/mode';
 
 import GeneralConfig from './GeneralConfig';
 import ImageConfig from './ImageConfig';
 import DirConfig from './DirConfig';
 
-type ConfigTypes = 'default' | 'image' | 'video' | 'dir';
+type ConfigTabType = 'default' | 'image' | 'video' | 'dir';
 
-export default function Config() {
-  const [tab, setTab] = createSignal<ConfigTypes>('default');
-  const [form, setForm] = createStore({ ...config });
+interface Props {
+  form: ConfigType;
+  onChange: SetStoreFunction<ConfigType>;
+}
+
+export default function Config({ form, onChange }: Props) {
+  const [tab, setTab] = createSignal<ConfigTabType>('default');
 
   const isImg = () => file().mode.includes('image') || file().mode.includes('dir');
   const isVideo = () => file().mode.includes('video');
   const isFolder = () => file().mode.includes('dir');
 
-  const handleClose = () => setPageMode('cancel');
-
-  const handleSubmit = () => {
-    setConfig({ ...form });
-    handleClose();
-  };
-
   return (
-    <div class="flex flex-col h-full" data-tauri-drag-region>
-      <header class="px-2 pt-2 mb-1" data-tauri-drag-region>
-        <Button onClick={() => setPageMode('cancel')}>
-          <ChevronLeft class="w-6 h-6" />
-        </Button>
-      </header>
+    <div class="bg-slate-900 py-2">
       <ol class="flex items-center space-x-1 px-2 pb-2">
         <Tab label="기본 설정" active={tab() === 'default'} onChange={() => setTab('default')} />
         <Show when={isImg()}>
@@ -47,27 +37,19 @@ export default function Config() {
           <Tab label="폴더" active={tab() === 'dir'} onChange={() => setTab('dir')} />
         </Show>
       </ol>
-      <section class="flex-auto p-4 pt-2 overflow-y-auto" style={{ 'max-height': 'calc(100vh - 155px)' }}>
+      <section class="p-4 pt-2 overflow-y-auto" style={{ 'max-height': '280px' }}>
         <Switch>
           <Match when={tab() === 'default'}>
-            <GeneralConfig value={form} onChange={setForm} />
+            <GeneralConfig value={form} onChange={onChange} />
           </Match>
           <Match when={tab() === 'image'}>
-            <ImageConfig value={form} onChange={setForm} />
+            <ImageConfig value={form} onChange={onChange} />
           </Match>
           <Match when={tab() === 'dir'}>
-            <DirConfig value={form} onChange={setForm} />
+            <DirConfig value={form} onChange={onChange} />
           </Match>
         </Switch>
       </section>
-      <footer class="flex-none text-right pt-2 px-4 space-x-1" data-tauri-drag-region>
-        <Button class="w-24 h-9" onClick={handleClose}>
-          취소하기
-        </Button>
-        <Button class="w-24 h-9" onClick={handleSubmit}>
-          적용하기
-        </Button>
-      </footer>
     </div>
   );
 }
@@ -80,7 +62,7 @@ interface TabProps {
 
 function Tab(props: TabProps) {
   const className = () => {
-    const defaultClass = 'flex flex-1 items-center justify-center h-9';
+    const defaultClass = 'flex flex-1 items-center justify-center h-7';
     return [defaultClass, props.active ? 'bg-sky-500' : ''].join(' ');
   };
 

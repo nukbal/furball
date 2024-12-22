@@ -38,7 +38,7 @@ function FileItem(p: ItemProps) {
                 {data().filename}
               </abbr>
             </div>
-            <small class="leading-none">{data().is_dir ? data().files.length : parseFileSize(data().size)}</small>
+            <small class="leading-none">{getFileSize(data())}</small>
           </li>
           <For each={files()}>
             {(item) => <FileItem path={item} nest={(p.nest ?? 0) + 1} />}
@@ -73,3 +73,11 @@ function MineIcon(p: { mineType: string; }) {
   };
   return <Dynamic component={icon()} class="inline-block w-5 h-5 mr-1" />;
 }
+
+function getFileSize(d: FileType) {
+  if (!d) return null;
+  if (d.is_dir) return d.files.length;
+  const size = parseFileSize(d.size);
+  if (d.mime_type === 'application/pdf') return `${size} (${d.len})`;
+  return size;
+};

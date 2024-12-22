@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use tauri::Manager;
+
 use super::inspect::FileMeta;
 
 pub fn get_cache_dir() -> Result<PathBuf, String> {
-  let cache_dir = tauri::api::path::cache_dir().unwrap().join("com.nukbal.furball");
+  let cache_dir = crate::app_handle().path().app_cache_dir().unwrap();
   let is_exists = Path::new(&cache_dir).is_dir();
   if !is_exists {
     match std::fs::create_dir(cache_dir.clone()) {
@@ -45,8 +47,7 @@ pub fn get_file_type(path: &Path) -> Option<String> {
   };
 
   let mime_type = file_type.mime_type();
-  if 
-    (mime_type.starts_with("image") && mime_type != "image/vnd.adobe.photoshop")
+  if (mime_type.starts_with("image") && mime_type != "image/vnd.adobe.photoshop")
     || mime_type.starts_with("video")
     // || file_type.mime_type() == "application/vnd.rar"
     || mime_type == "application/zip"

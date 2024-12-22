@@ -1,4 +1,4 @@
-import { open, message } from '@tauri-apps/api/dialog';
+import { open, message } from '@tauri-apps/plugin-dialog';
 import { downloadDir } from '@tauri-apps/api/path';
 
 import IconBase from 'components/Icons/Base';
@@ -30,6 +30,7 @@ export default function EmptyStatus() {
       }
       setPageMode('cancel');
     } catch (e: any) {
+      console.log(e);
       message(e.message);
       setPageMode('cancel');
     }

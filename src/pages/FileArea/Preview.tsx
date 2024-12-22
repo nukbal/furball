@@ -18,12 +18,12 @@ export default function Preview() {
   });
 
   return (
-    <figure class="flex flex-1 items-center justify-center w-32 h-full mr-2 mb-2 pointer-events-none">
+    <figure class="flex flex-1 items-center justify-center w-28 h-full mr-2 mb-2 pointer-events-none">
       <Show when={thumb()} fallback={<FileIcon class="w-24 h-24 mt-6" />}>
         <img
           class="object-contain object-center max-h-full max-w-full rounded-lg m-auto"
           src={`data:image/jpeg;base64,${thumb()}`}
-          style={{ 'max-height': '240px' }}
+          style={{ 'max-height': '200px' }}
         />
       </Show>
     </figure>

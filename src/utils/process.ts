@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 
 export async function processImage(filenames: string[]) {
   const res = await invoke('process_files', { filenames });

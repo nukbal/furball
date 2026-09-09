@@ -9,6 +9,7 @@ pub fn isImageExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".jpeg") or
         std.ascii.eqlIgnoreCase(extension, ".png") or
         std.ascii.eqlIgnoreCase(extension, ".bmp") or
+        std.ascii.eqlIgnoreCase(extension, ".webp") or
         std.ascii.eqlIgnoreCase(extension, ".avif") or
         std.ascii.eqlIgnoreCase(extension, ".tga");
 }
@@ -31,10 +32,7 @@ pub fn classifyPath(io: std.Io, path: []const u8, stat: std.Io.File.Stat) !proto
     if (std.ascii.eqlIgnoreCase(extension, ".pdf")) return .pdf;
     if (std.ascii.eqlIgnoreCase(extension, ".zip")) return .zip;
 
-    if (isImageExtension(extension)) {
-        if (length == 0) return .image;
-        return error.UnknownType;
-    }
+    if (isImageExtension(extension)) return .image;
 
     return error.UnknownType;
 }
@@ -42,5 +40,6 @@ pub fn classifyPath(io: std.Io, path: []const u8, stat: std.Io.File.Stat) !proto
 fn readHeader(io: std.Io, path: []const u8, buffer: []u8) usize {
     var file = std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = false }) catch return 0;
     defer file.close(io);
+
     return file.readPositional(io, &.{buffer}, 0) catch 0;
 }

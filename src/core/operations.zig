@@ -99,22 +99,28 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
 fn inspectDirectory(allocator: Allocator, io: std.Io, source: []const u8, depth: usize) anyerror![]protocol.InspectNode {
     var directory = try std.Io.Dir.cwd().openDir(io, source, .{ .iterate = true, .follow_symlinks = false });
     defer directory.close(io);
+
     var iterator = directory.iterate();
     var nodes = std.ArrayList(protocol.InspectNode).empty;
     errdefer {
         for (nodes.items) |node| freeNode(allocator, node);
         nodes.deinit(allocator);
     }
+
     while (try iterator.next(io)) |entry| {
         if (nodes.items.len >= max_files) return error.TooManyFiles;
         if (entry.kind == .sym_link or (entry.kind != .file and entry.kind != .directory)) continue;
+
         const child_path = try std.fs.path.join(allocator, &.{ source, entry.name });
         defer allocator.free(child_path);
+
         const child_stat = std.Io.Dir.cwd().statFile(io, child_path, .{ .follow_symlinks = false }) catch continue;
         const child_kind = kind.classifyPath(io, child_path, child_stat) catch |err| switch (err) {
             error.UnknownType, error.UnsupportedFileKind => continue,
         };
+
         if (child_kind != .image and child_kind != .directory) continue;
+
         const child = inspectNode(allocator, io, child_path, depth) catch |err| switch (err) {
             error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink => continue,
             else => return err,
@@ -146,12 +152,14 @@ fn imageCount(node: protocol.InspectNode) u32 {
 fn archiveChildren(allocator: Allocator, source: []const u8, parsed: *const zip.Archive) ![]protocol.InspectNode {
     const indices = try parsed.sortedIndices(allocator);
     defer allocator.free(indices);
+
     const children = try allocator.alloc(protocol.InspectNode, indices.len);
     var built: usize = 0;
     errdefer {
         for (children[0..built]) |node| freeNode(allocator, node);
         allocator.free(children);
     }
+
     for (indices) |index| {
         const entry = parsed.entries[index];
         const child_path = try std.fmt.allocPrint(allocator, "zip://{s}!/{s}", .{ source, entry.name });
@@ -168,6 +176,7 @@ fn archiveChildren(allocator: Allocator, source: []const u8, parsed: *const zip.
         };
         built += 1;
     }
+
     return children;
 }
 
@@ -262,6 +271,7 @@ fn processZip(
 
     var parsed = try zip.Archive.open(allocator, io, source);
     defer parsed.deinit();
+
     const indices = try parsed.sortedIndices(allocator);
     defer allocator.free(indices);
 

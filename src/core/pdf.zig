@@ -8,8 +8,8 @@ const storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const max_pdf_bytes: usize = 512 * 1024 * 1024;
-pub const max_stream_bytes: usize = 64 * 1024 * 1024;
+const max_pdf_bytes: usize = 512 * 1024 * 1024;
+const max_stream_bytes: usize = 64 * 1024 * 1024;
 
 pub const JpegImage = struct {
     allocator: std.mem.Allocator,

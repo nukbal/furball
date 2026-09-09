@@ -333,7 +333,8 @@ fn createPdf(allocator: std.mem.Allocator, pages: []const Page) ![]u8 {
             !c.pdfioDictSetObj(xobjects, image_name_z, image_object) or
             !c.pdfioDictSetDict(resources, "XObject", xobjects) or
             !c.pdfioDictSetDict(page_dict, "Resources", resources) or
-            !c.pdfioDictSetRect(page_dict, "MediaBox", &page_box)
+            !c.pdfioDictSetRect(page_dict, "MediaBox", &page_box) or
+            !c.pdfioDictSetRect(page_dict, "CropBox", &page_box)
         ) return error.PdfCreateFailed;
 
         const page_stream = c.pdfioFileCreatePage(pdf, page_dict) orelse return error.PdfCreateFailed;

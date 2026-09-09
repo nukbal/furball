@@ -8,11 +8,12 @@ const storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const max_input_bytes: usize = 512 * 1024 * 1024;
-pub const max_thumbnail_bytes: usize = 192 * 1024;
 pub const max_pixels: u64 = 200 * 1000 * 1000;
 pub const max_dimension: u32 = 65_500;
-pub const max_decoded_bytes: u64 = 600 * 1000 * 1000;
+
+const max_input_bytes: usize = 512 * 1024 * 1024;
+const max_thumbnail_bytes: usize = 192 * 1024;
+const max_decoded_bytes: u64 = 600 * 1000 * 1000;
 const channels: usize = 3;
 
 pub const ImageInfo = struct {
@@ -113,8 +114,10 @@ pub fn thumbnailBytes(alloc: Allocator, input: []const u8) ![]u8 {
 pub fn thumbnailBytesFromRgb(alloc: Allocator, width: u32, height: u32, pixels: []const u8) ![]u8 {
     const checked_width = std.math.cast(c_int, width) orelse return error.ImageDimensionsTooLarge;
     const checked_height = std.math.cast(c_int, height) orelse return error.ImageDimensionsTooLarge;
+
     const info = try checkedInfo(checked_width, checked_height);
     const byte_count = try byteCount(info);
+
     if (pixels.len < byte_count) return error.ImageDecodeFailed;
 
     const owned = try alloc.alloc(u8, byte_count);
@@ -136,6 +139,7 @@ fn decode(alloc: Allocator, bytes: []const u8) !DecodedImage {
 
     const decoded = stb.stbi_load_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &source_channels, @intCast(channels)) orelse return error.ImageDecodeFailed;
     defer stb.stbi_image_free(@ptrCast(decoded));
+
     const decoded_info = try checkedInfo(width, height);
     if (decoded_info.width != info.width or decoded_info.height != info.height) return error.ImageDecodeFailed;
 
@@ -281,20 +285,26 @@ pub fn inspectMemory(bytes: []const u8) !ImageInfo {
 
 fn checkedInfo(width: c_int, height: c_int) !ImageInfo {
     if (width <= 0 or height <= 0) return error.ImageDimensionsTooLarge;
+
     const checked_width = std.math.cast(u32, width) orelse return error.ImageDimensionsTooLarge;
     const checked_height = std.math.cast(u32, height) orelse return error.ImageDimensionsTooLarge;
     if (checked_width > max_dimension or checked_height > max_dimension) return error.ImageDimensionsTooLarge;
+
     const pixels = std.math.mul(u64, checked_width, checked_height) catch return error.ImageDimensionsTooLarge;
     if (pixels > max_pixels) return error.ImagePixelsTooLarge;
+
     const decoded_bytes = std.math.mul(u64, pixels, channels) catch return error.ImageAllocationTooLarge;
     if (decoded_bytes > max_decoded_bytes) return error.ImageAllocationTooLarge;
+
     return .{ .width = checked_width, .height = checked_height };
 }
 
 fn byteCount(info: ImageInfo) !usize {
     const pixels = std.math.mul(u64, info.width, info.height) catch return error.ImageAllocationTooLarge;
     const bytes = std.math.mul(u64, pixels, channels) catch return error.ImageAllocationTooLarge;
+
     if (bytes > max_decoded_bytes) return error.ImageAllocationTooLarge;
+
     return std.math.cast(usize, bytes) orelse return error.ImageAllocationTooLarge;
 }
 
@@ -306,12 +316,16 @@ fn stride(width: u32) !usize {
 fn resizeInfo(info: ImageInfo, target: u32) !ImageInfo {
     if (target == 0) return error.InvalidResize;
     if (info.shortEdge() <= target) return info;
+
     const short: u64 = info.shortEdge();
     const long: u64 = @max(info.width, info.height);
     const scaled_long = std.math.mul(u64, long, target) catch return error.ImageDimensionsTooLarge;
     const output_long = scaled_long / short;
+
     if (output_long == 0 or output_long > max_dimension) return error.ImageDimensionsTooLarge;
+
     const output_long_u32 = std.math.cast(u32, output_long) orelse return error.ImageDimensionsTooLarge;
+
     return if (info.width >= info.height)
         .{ .width = output_long_u32, .height = target }
     else

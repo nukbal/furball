@@ -1,13 +1,13 @@
 const std = @import("std");
 const c = @import("ncnn");
 
+const max_pixels = @import("image.zig").max_pixels;
+const max_dimension = @import("image.zig").max_dimension;
+
 const x2_param = @embedFile("../models/realesr-animevideov3-x2.param");
 const x2_model = @embedFile("../models/realesr-animevideov3-x2.bin");
 const x4_param = @embedFile("../models/realesr-animevideov3-x4.param");
 const x4_model = @embedFile("../models/realesr-animevideov3-x4.bin");
-
-pub const max_dimension: u32 = 65_500;
-pub const max_pixels: u64 = 200 * 1000 * 1000;
 
 pub const Models = struct {
     x2: Model,

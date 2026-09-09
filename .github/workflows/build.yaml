@@ -1,53 +1,98 @@
-name: "build"
+name: build
 on:
   push:
-    branches:
-      - release
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  build-app:
+  desktop:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
-
-      - name: install dependencies macos
-        if: matrix.platform == 'macos-latest'
-        run: sh ./scripts/install-deps.sh
-
-      - name: install dependencies windows
-        if: matrix.platform == 'windows-latest'
-        run:  ./scripts/install-deps.bat
-        shell: cmd
-
-      - uses: actions/cache@v3
+      - uses: actions/checkout@v4
+      - uses: vercel-labs/setup-zig@v1
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - uses: oven-sh/setup-bun@v1
+          version: 0.16.0
+      - name: Install media tools
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg development libraries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vcpkg install ffmpeg:x64-windows
+      - name: Resolve FFmpeg prefix (macOS)
+        if: runner.os == 'macOS'
+        id: ffmpeg_macos
+        shell: bash
+        run: echo "prefix=$(brew --prefix ffmpeg)" >> "$GITHUB_OUTPUT"
+      - name: Resolve FFmpeg prefix (Windows)
+        if: runner.os == 'Windows'
+        id: ffmpeg_windows
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed/x64-windows"
+          $prefix = $prefix -replace '\\', '/'
+          "prefix=$prefix" >> $env:GITHUB_OUTPUT
+      - name: Check formatting
+        run: zig fmt --check build.zig build.zig.zon runtime/models.zig src/main.zig src/model.zig src/tests.zig src/core
+      - name: Unit and UI tests
+        run: zig build test -Dplatform=null -Doptimize=Debug "-Dffmpeg-prefix=${{ steps.ffmpeg_macos.outputs.prefix || steps.ffmpeg_windows.outputs.prefix }}"
+      - name: Build release
+        run: zig build -Doptimize=ReleaseSafe "-Dffmpeg-prefix=${{ steps.ffmpeg_macos.outputs.prefix || steps.ffmpeg_windows.outputs.prefix }}"
+      - name: Media integration tests
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke-test.py
+      - name: Package
+        run: zig build package -Doptimize=ReleaseSafe "-Dffmpeg-prefix=${{ steps.ffmpeg_macos.outputs.prefix || steps.ffmpeg_windows.outputs.prefix }}"
+      - name: Verify Windows FFmpeg package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "zig-out/package/windows/bin"
+          if (-not (Test-Path (Join-Path $bin "furball.exe"))) { throw "packaged furball.exe is missing" }
+          foreach ($name in @("avformat", "avcodec", "swscale", "avutil")) {
+            if (-not (Get-ChildItem $bin -Filter "$name*.dll" -ErrorAction SilentlyContinue)) {
+              throw "FFmpeg DLL $name is missing from the package"
+            }
+          }
+      - name: Verify macOS FFmpeg package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="zig-out/package/furball.app"
+          binary="$app/Contents/MacOS/furball"
+          frameworks="$app/Contents/Frameworks"
+          brew_root="$(brew --prefix)"
+          test -x "$binary"
+          for name in libavformat libavcodec libswscale libavutil; do
+            if ! find "$frameworks" -maxdepth 1 -name "$name*.dylib" -print -quit | grep -q .; then
+              echo "FFmpeg dylib $name is missing from the app bundle"
+              exit 1
+            fi
+          done
+          if ! otool -l "$binary" | grep -F '@loader_path/../Frameworks' >/dev/null; then
+            echo "the app is missing its Frameworks rpath"
+            exit 1
+          fi
+          if otool -L "$binary" | grep -F "$brew_root/" >/dev/null; then
+            echo "the app still references an absolute Homebrew dylib"
+            exit 1
+          fi
+      - name: Archive macOS application
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent zig-out/package/furball.app zig-out/furball-macos.zip
+      - name: Archive Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path zig-out/package/windows/* -DestinationPath zig-out/furball-windows.zip
+      - uses: actions/upload-artifact@v4
         with:
-          bun-version: latest
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-
-      - run: bun install
-
-      - name: build app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: "bun tauri"
-          releaseDraft: true
-          tagName: v__VERSION__
-          releaseName: "v__VERSION__"
-          releaseBody: "See the assets to download this version and install."
+          name: furball-${{ runner.os }}
+          path: zig-out/furball-*.zip
+          if-no-files-found: error

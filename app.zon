@@ -1,0 +1,39 @@
+.{
+    .id = "dev.nukbal.furball",
+    .name = "furball",
+    .display_name = "Furball",
+    .description = "Native image conversion and file organization.",
+    .version = "0.6.0",
+    .icons = .{ "assets/icon.icns" },
+    .platforms = .{ "macos", "windows" },
+    .permissions = .{ "view", "dialog", "filesystem" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "file_drops" },
+    .assets = .{
+        .images = .{
+            .{ .id = 1, .path = "assets/icon.icns" },
+        },
+    },
+    .shell = .{
+        .windows = .{
+            .{
+                .label = "main",
+                .title = "Furball",
+                .width = 980,
+                .height = 720,
+                .min_width = 760,
+                .min_height = 560,
+                .restore_policy = "center_on_primary",
+                .titlebar = "hidden_inset_tall",
+                .views = .{
+                    .{ .label = "furball-canvas", .kind = "gpu_surface", .fill = true, .role = "Furball canvas", .accessibility_label = "Furball", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                },
+            },
+        },
+    },
+    .security = .{
+        .navigation = .{
+            .allowed_origins = .{ "zero://app", "zero://inline" },
+            .external_links = .{ .action = "deny" },
+        },
+    },
+}

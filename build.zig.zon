@@ -1,0 +1,47 @@
+.{
+    .name = .furball,
+    .fingerprint = 0xf8811e3b74702d07,
+    .version = "0.6.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .native_sdk = .{
+            .url = "git+https://github.com/vercel-labs/native.git#31663e16b054f212f0377878eb901330bbc94b53",
+            .hash = "native_sdk-0.1.0-hzDzQowrsgLwH8sxOrPP3toUyhGRJ3eNIir1c6O_27pg",
+        },
+        .stb = .{
+            .url = "git+https://github.com/nothings/stb.git#2c980bb59875b0d32144a71867fbdebb2f77cd20",
+            .hash = "N-V-__8AAPJDTgBMvhz_RoGlqYS1cMahRQ6Q5GVqYKny36gQ",
+        },
+        .miniz = .{
+            .url = "git+https://github.com/richgel999/miniz.git#77d0dce8627735138c51770d1799a1ef48f2117d",
+            .hash = "N-V-__8AAJmKFgANnVgLMCG4IKGFiSk_OceSUlZrQfI_Lo-r",
+        },
+        .pdfio = .{
+            .url = "git+https://github.com/michaelrsweet/pdfio.git#53bc8a72cc920b76b07296b24115ebbf40a8efbd",
+            .hash = "N-V-__8AAPverACQrWyurwJweuqb1b4smAke2vWQseRF1eS_",
+        },
+        .ttf = .{
+            .url = "git+https://github.com/michaelrsweet/ttf.git#aa040abf4d790465d3bfc05785beb2994dd98ed9",
+            .hash = "N-V-__8AAKSEUADIRHPCmMWatMUIqY__wLFfays2hztuxZA0",
+        },
+        .mozjpeg = .{
+            .url = "git+https://github.com/mozilla/mozjpeg.git?ref=v4.1.1#a2d2907ff023227e80c1e4efa809812410275a12",
+            .hash = "N-V-__8AAL3jggBhdzIMaG_ZK89ecfojCQpxPYYgZAQt6bp9",
+        },
+        .ncnn = .{
+            .url = "git+https://github.com/Tencent/ncnn.git#305837fd4a722ebc47c5d72e72d8ec9ae970e932",
+            .hash = "N-V-__8AAAucxAJxOnskCHATKT-DclBP9NQOMZli1b0GGY0o",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "libs",
+        "app.zon",
+        "assets",
+        "scripts",
+        "README.md",
+        "runtime",
+    },
+}

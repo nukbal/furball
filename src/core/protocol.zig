@@ -44,13 +44,17 @@ pub fn validateConfig(config: Config) ConfigError!void {
 pub fn parseConfig(allocator: std.mem.Allocator, source: []const u8) !std.json.Parsed(Config) {
     var parsed = try std.json.parseFromSlice(Config, allocator, source, .{ .ignore_unknown_fields = false });
     errdefer parsed.deinit();
+
     try validateConfig(parsed.value);
+
     return parsed;
 }
 
 pub fn stringify(allocator: std.mem.Allocator, value: anytype) ![]u8 {
     var output = std.Io.Writer.Allocating.init(allocator);
     errdefer output.deinit();
+
     try std.json.Stringify.value(value, .{}, &output.writer);
+
     return output.toOwnedSlice();
 }

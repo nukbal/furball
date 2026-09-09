@@ -43,12 +43,15 @@ pub const Models = struct {
             const model = if (scale <= 2) &self.x2 else &self.x4;
             var next_width: u32 = 0;
             var next_height: u32 = 0;
+
             const next = try model.upscaleOnce(allocator, current, width, height, &next_width, &next_height);
             if (owned) |pixels| allocator.free(pixels);
+
             owned = next;
             current = next;
             width = next_width;
             height = next_height;
+
             if (@min(width, height) <= short_edge) return error.InferenceFailed;
             if (width > max_dimension or height > max_dimension) return error.InvalidResize;
             const pixels = std.math.mul(u64, width, height) catch return error.InvalidResize;
@@ -83,9 +86,11 @@ const Model = struct {
         const net = c.ncnn_net_create();
         if (net == null) return error.AllocationFailed;
         defer c.ncnn_net_destroy(net);
+
         const option = c.ncnn_net_get_option(net) orelse return error.AllocationFailed;
         c.ncnn_option_set_num_threads(option, 1);
         c.ncnn_option_set_use_vulkan_compute(option, 0);
+
         if (c.ncnn_net_load_param_memory(net, @ptrCast(self.param.ptr)) != 0) return error.ModelFailed;
         if (c.ncnn_net_load_model_memory(net, @ptrCast(self.model.ptr)) <= 0) return error.ModelFailed;
 
@@ -97,25 +102,35 @@ const Model = struct {
 
         const extractor = c.ncnn_extractor_create(net) orelse return error.AllocationFailed;
         defer c.ncnn_extractor_destroy(extractor);
+
         if (c.ncnn_extractor_input(extractor, "data", input) != 0) return error.InferenceFailed;
+
         var output: c.ncnn_mat_t = null;
         if (c.ncnn_extractor_extract(extractor, "output", &output) != 0) return error.InferenceFailed;
+
         const output_mat = output orelse return error.InferenceFailed;
         defer c.ncnn_mat_destroy(output_mat);
+
         const width = c.ncnn_mat_get_w(output_mat);
         const height = c.ncnn_mat_get_h(output_mat);
         if (c.ncnn_mat_get_c(output_mat) != 3 or width <= 0 or height <= 0) return error.InferenceFailed;
+
         const width_u32 = std.math.cast(u32, width) orelse return error.InferenceFailed;
         const height_u32 = std.math.cast(u32, height) orelse return error.InferenceFailed;
         const count = std.math.mul(usize, std.math.mul(usize, width_u32, height_u32) catch return error.InferenceFailed, 3) catch return error.InferenceFailed;
         var output_mean = [_]f32{ 0, 0, 0 };
         var output_norm = [_]f32{ 255, 255, 255 };
+
         c.ncnn_mat_substract_mean_normalize(output_mat, &output_mean, &output_norm);
+
         const pixels = allocator.alloc(u8, count) catch return error.AllocationFailed;
         errdefer allocator.free(pixels);
+
         c.ncnn_mat_to_pixels(output_mat, pixels.ptr, c.NCNN_MAT_PIXEL_RGB, width * 3);
+
         output_width.* = width_u32;
         output_height.* = height_u32;
+
         return pixels;
     }
 };

@@ -13,9 +13,10 @@ const video = @import("video.zig");
 const zip = @import("zip.zig");
 
 const max_files: usize = 100_000;
+const Allocator = std.mem.Allocator;
 
 pub const OutputList = struct {
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     values: std.ArrayList([]const u8) = .empty,
 
     pub fn deinit(self: *OutputList) void {
@@ -25,20 +26,23 @@ pub const OutputList = struct {
     }
 };
 
-pub fn inspect(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !protocol.InspectResponse {
+pub fn inspect(allocator: Allocator, io: std.Io, source: []const u8) !protocol.InspectResponse {
     return inspectNode(allocator, io, source, 0);
 }
 
-fn inspectNode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, depth: usize) anyerror!protocol.InspectResponse {
+fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usize) anyerror!protocol.InspectResponse {
     if (depth > 64) return error.DirectoryTooDeep;
+
     const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
     if (stat.kind == .sym_link) return error.UnsupportedSymlink;
+
     const file_kind = try kind.classifyPath(io, source, stat);
     const owned_path = try allocator.dupe(u8, source);
     const owned_name = allocator.dupe(u8, std.fs.path.basename(source)) catch |err| {
         allocator.free(owned_path);
         return err;
     };
+
     var result = protocol.InspectResponse{
         .path = owned_path,
         .name = owned_name,
@@ -46,10 +50,11 @@ fn inspectNode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dep
         .size = stat.size,
     };
     errdefer freeResponse(allocator, &result);
+
     switch (file_kind) {
         .directory => {
             result.children = try inspectDirectory(allocator, io, source, depth + 1);
-            result.count = @intCast(result.children.len);
+            for (result.children) |child| result.count += imageCount(child);
             for (result.children) |child| {
                 if (child.thumbnail) |thumbnail| {
                     result.thumbnail = try allocator.dupe(u8, thumbnail);
@@ -63,20 +68,26 @@ fn inspectNode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dep
         },
         .image => result.thumbnail = try allocator.dupe(u8, source),
         .pdf => {
-            const processor = pdf.Processor{ .allocator = allocator, .io = io };
-            result.count = processor.pageCount(source) catch return error.InvalidPdf;
-            if (try processor.thumbnailBytes(source)) |thumbnail| result.thumbnail_blob = try encodeThumbnail(allocator, thumbnail);
+            result.count = pdf.pageCount(allocator, source) catch return error.InvalidPdf;
+            if (try pdf.thumbnailBytes(allocator, source)) |thumbnail| {
+                defer allocator.free(thumbnail);
+                result.thumbnail_blob = try encodeThumbnail(allocator, thumbnail);
+            }
         },
         .zip => {
             var parsed = try zip.Archive.open(allocator, io, source);
             defer parsed.deinit();
+
             result.count = parsed.file_count;
             result.children = try archiveChildren(allocator, source, &parsed);
+
             if (parsed.firstSupportedImage()) |entry| {
                 const bytes = try parsed.readEntry(entry);
                 defer allocator.free(bytes);
-                const thumbnail = try (image.Processor{ .allocator = allocator, .io = io }).thumbnailBytes(bytes);
+
+                const thumbnail = try image.thumbnailBytes(allocator, bytes);
                 defer allocator.free(thumbnail);
+
                 result.thumbnail_blob = try encodeThumbnail(allocator, thumbnail);
             }
         },
@@ -85,7 +96,7 @@ fn inspectNode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dep
     return result;
 }
 
-fn inspectDirectory(allocator: std.mem.Allocator, io: std.Io, source: []const u8, depth: usize) anyerror![]protocol.InspectNode {
+fn inspectDirectory(allocator: Allocator, io: std.Io, source: []const u8, depth: usize) anyerror![]protocol.InspectNode {
     var directory = try std.Io.Dir.cwd().openDir(io, source, .{ .iterate = true, .follow_symlinks = false });
     defer directory.close(io);
     var iterator = directory.iterate();
@@ -99,10 +110,23 @@ fn inspectDirectory(allocator: std.mem.Allocator, io: std.Io, source: []const u8
         if (entry.kind == .sym_link or (entry.kind != .file and entry.kind != .directory)) continue;
         const child_path = try std.fs.path.join(allocator, &.{ source, entry.name });
         defer allocator.free(child_path);
-        const child = inspectNode(allocator, io, child_path, depth) catch |err| switch (err) {
+        const child_stat = std.Io.Dir.cwd().statFile(io, child_path, .{ .follow_symlinks = false }) catch continue;
+        const child_kind = kind.classifyPath(io, child_path, child_stat) catch |err| switch (err) {
             error.UnknownType, error.UnsupportedFileKind => continue,
+        };
+        if (child_kind != .image and child_kind != .directory) continue;
+        const child = inspectNode(allocator, io, child_path, depth) catch |err| switch (err) {
+            error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink => continue,
             else => return err,
         };
+        if (child.kind != .image and child.kind != .directory) {
+            freeNode(allocator, child);
+            continue;
+        }
+        if (child.kind == .directory and child.count == 0) {
+            freeNode(allocator, child);
+            continue;
+        }
         nodes.append(allocator, child) catch |err| {
             freeNode(allocator, child);
             return err;
@@ -112,7 +136,14 @@ fn inspectDirectory(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     return nodes.toOwnedSlice(allocator);
 }
 
-fn archiveChildren(allocator: std.mem.Allocator, source: []const u8, parsed: *const zip.Archive) ![]protocol.InspectNode {
+fn imageCount(node: protocol.InspectNode) u32 {
+    if (node.kind == .image) return 1;
+    var count: u32 = 0;
+    for (node.children) |child| count +|= imageCount(child);
+    return count;
+}
+
+fn archiveChildren(allocator: Allocator, source: []const u8, parsed: *const zip.Archive) ![]protocol.InspectNode {
     const indices = try parsed.sortedIndices(allocator);
     defer allocator.free(indices);
     const children = try allocator.alloc(protocol.InspectNode, indices.len);
@@ -140,12 +171,15 @@ fn archiveChildren(allocator: std.mem.Allocator, source: []const u8, parsed: *co
     return children;
 }
 
-fn encodeThumbnail(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+fn encodeThumbnail(allocator: Allocator, bytes: []const u8) ![]u8 {
     if (bytes.len > protocol.max_thumbnail_blob_bytes) return error.ThumbnailTooLarge;
+
     const length = std.base64.standard.Encoder.calcSize(bytes.len);
     if (length > protocol.max_thumbnail_blob_base64_bytes) return error.ThumbnailTooLarge;
+
     const encoded = try allocator.alloc(u8, length);
     _ = std.base64.standard.Encoder.encode(encoded, bytes);
+
     return encoded;
 }
 
@@ -155,12 +189,12 @@ fn lessNode(_: void, a: protocol.InspectNode, b: protocol.InspectNode) bool {
     return natural.compare(a.name, b.name) == .lt;
 }
 
-pub fn freeResponse(allocator: std.mem.Allocator, response: *protocol.InspectResponse) void {
+pub fn freeResponse(allocator: Allocator, response: *protocol.InspectResponse) void {
     freeNode(allocator, response.*);
     response.* = undefined;
 }
 
-fn freeNode(allocator: std.mem.Allocator, node: protocol.InspectNode) void {
+fn freeNode(allocator: Allocator, node: protocol.InspectNode) void {
     allocator.free(node.path);
     allocator.free(node.name);
     if (node.thumbnail) |thumbnail| allocator.free(thumbnail);
@@ -169,48 +203,60 @@ fn freeNode(allocator: std.mem.Allocator, node: protocol.InspectNode) void {
     if (node.children.len != 0) allocator.free(node.children);
 }
 
-pub fn process(allocator: std.mem.Allocator, io: std.Io, config: protocol.Config, source: []const u8) !OutputList {
+pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source: []const u8) !OutputList {
     try protocol.validateConfig(config);
+
     const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
+
     if (stat.kind == .sym_link) return error.UnsupportedSymlink;
+
     var outputs = OutputList{ .allocator = allocator };
     errdefer outputs.deinit();
+
     const models = realesrgan.Models.init();
     const ai_models: ?*const realesrgan.Models = if (config.ai) &models else null;
+
     switch (try kind.classifyPath(io, source, stat)) {
-        .image => try processImage(allocator, io, source, config, ai_models, &outputs),
+        .image => try processImage(allocator, io, source, config, &outputs, ai_models),
         .video => try processVideo(allocator, io, source, config, &outputs),
-        .directory => try processDirectory(allocator, io, source, config, ai_models, &outputs),
-        .zip => try processZip(allocator, io, source, config, ai_models, &outputs),
+        .directory => try processDirectory(allocator, io, source, config, &outputs, ai_models),
+        .zip => try processZip(allocator, io, source, config, &outputs, ai_models),
         .pdf, .archive_file => return error.UnsupportedSource,
     }
+
     if (outputs.values.items.len == 0) return error.NoProcessableFiles;
+
     return outputs;
 }
 
-fn processImage(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: protocol.Config, ai_models: ?*const realesrgan.Models, outputs: *OutputList) !void {
+fn processImage(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*const realesrgan.Models) !void {
     const destination = try target(allocator, io, source, config, "jpg");
     defer allocator.free(destination);
-    const bytes = try (image.Processor{ .allocator = allocator, .io = io, .ai_models = ai_models }).encodeBytes(source, config, 0);
+
+    const bytes = try image.encodeBytes(allocator, io, source, config, 0, ai_models);
     defer allocator.free(bytes);
+
     try storage.writeAtomic(io, destination, bytes);
+
     try appendOutput(allocator, outputs, destination);
 }
 
-fn processVideo(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList) !void {
+fn processVideo(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList) !void {
     const destination = try target(allocator, io, source, config, "gif");
     defer allocator.free(destination);
-    try (video.Processor{ .allocator = allocator, .io = io }).convertMp4ToGif(source, destination);
+
+    try video.convertMp4ToGif(allocator, io, source, destination);
+
     try appendOutput(allocator, outputs, destination);
 }
 
 fn processZip(
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     io: std.Io,
     source: []const u8,
     config: protocol.Config,
-    ai_models: ?*const realesrgan.Models,
     outputs: *OutputList,
+    ai_models: ?*const realesrgan.Models,
 ) !void {
     if (config.dir_mode != .pdf) return error.UnsupportedSource;
 
@@ -219,7 +265,6 @@ fn processZip(
     const indices = try parsed.sortedIndices(allocator);
     defer allocator.free(indices);
 
-    const processor = image.Processor{ .allocator = allocator, .io = io, .ai_models = ai_models };
     var pages = std.ArrayList(pdf.Page).empty;
     defer {
         for (pages.items) |page| allocator.free(page.bytes);
@@ -229,18 +274,17 @@ fn processZip(
     for (indices) |index| {
         const entry = &parsed.entries[index];
         if (entry.is_dir or entry.kind != .image) continue;
+
         const input = try parsed.readEntry(entry);
         defer allocator.free(input);
-        const encoded = try processor.encodeBytesFromMemory(input, config);
+
+        const encoded = try image.encodeBytesFromMemory(allocator, input, config, ai_models);
         const dimensions = image.inspectMemory(encoded) catch |err| {
             allocator.free(encoded);
             return err;
         };
-        pages.append(allocator, .{
-            .bytes = encoded,
-            .width = dimensions.width,
-            .height = dimensions.height,
-        }) catch |err| {
+
+        pages.append(allocator, .{ .bytes = encoded, .width = dimensions.width, .height = dimensions.height }) catch |err| {
             allocator.free(encoded);
             return err;
         };
@@ -249,38 +293,44 @@ fn processZip(
 
     const destination = try target(allocator, io, source, config, "pdf");
     defer allocator.free(destination);
-    try (pdf.Processor{ .allocator = allocator, .io = io, .ai_models = ai_models }).createFromJpegs(pages.items, destination);
+    try pdf.createFromJpegs(allocator, io, pages.items, destination);
     try appendOutput(allocator, outputs, destination);
 }
 
-fn processDirectory(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: protocol.Config, ai_models: ?*const realesrgan.Models, outputs: *OutputList) !void {
+fn processDirectory(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*const realesrgan.Models) !void {
     var entries = try collectDirectory(allocator, io, source);
     defer entries.deinit(allocator);
+
     std.mem.sort(archive.FileEntry, entries.items, {}, lessFileEntry);
+
     if (config.dir_mode == .none) {
-        for (entries.items) |entry| if (entry.kind == .image) try processImage(allocator, io, entry.source, config, ai_models, outputs);
+        for (entries.items) |entry| if (entry.kind == .image) try processImage(allocator, io, entry.source, config, outputs, ai_models);
         return;
     }
+
     const extension = if (config.dir_mode == .pdf) "pdf" else "zip";
     const destination = try target(allocator, io, source, config, extension);
     defer allocator.free(destination);
+
     if (config.dir_mode == .pdf) {
         var sources = std.ArrayList([]const u8).empty;
         defer sources.deinit(allocator);
+
         for (entries.items) |entry| if (entry.kind == .image) try sources.append(allocator, entry.source);
         if (sources.items.len == 0) return error.EmptyDirectory;
-        try (pdf.Processor{ .allocator = allocator, .io = io, .ai_models = ai_models }).toPdf(sources.items, destination, config);
+
+        try pdf.toPdf(allocator, io, sources.items, destination, config, ai_models);
     } else {
-        try (archive.Processor{ .allocator = allocator, .io = io }).createZip(entries.items, destination, config, .{ .allocator = allocator, .io = io, .ai_models = ai_models });
+        try archive.createZip(allocator, io, entries.items, destination, config, ai_models);
     }
+
     try appendOutput(allocator, outputs, destination);
 }
 
 const EntryList = struct {
-    allocator: std.mem.Allocator,
     items: []archive.FileEntry,
 
-    fn deinit(self: *EntryList, allocator: std.mem.Allocator) void {
+    fn deinit(self: *EntryList, allocator: Allocator) void {
         for (self.items) |entry| {
             allocator.free(entry.source);
             allocator.free(entry.relative);
@@ -290,7 +340,7 @@ const EntryList = struct {
     }
 };
 
-fn collectDirectory(allocator: std.mem.Allocator, io: std.Io, root: []const u8) !EntryList {
+fn collectDirectory(allocator: Allocator, io: std.Io, root: []const u8) !EntryList {
     var directory = try std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true, .follow_symlinks = false });
     defer directory.close(io);
     var walker = try directory.walk(allocator);
@@ -303,6 +353,7 @@ fn collectDirectory(allocator: std.mem.Allocator, io: std.Io, root: []const u8) 
         }
         list.deinit(allocator);
     }
+
     while (try walker.next(io)) |entry| {
         if (list.items.len >= max_files or entry.kind != .file) continue;
         const source = try std.fs.path.join(allocator, &.{ root, entry.path });
@@ -328,28 +379,35 @@ fn collectDirectory(allocator: std.mem.Allocator, io: std.Io, root: []const u8) 
             return err;
         };
     }
-    return .{ .allocator = allocator, .items = try list.toOwnedSlice(allocator) };
+
+    return .{ .items = try list.toOwnedSlice(allocator) };
 }
 
 fn lessFileEntry(_: void, a: archive.FileEntry, b: archive.FileEntry) bool {
     return natural.compare(a.relative, b.relative) == .lt;
 }
 
-fn target(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: protocol.Config, extension: []const u8) ![]u8 {
+fn target(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, extension: []const u8) ![]u8 {
     const directory = try paths.outputDirectory(allocator, config, source);
     defer allocator.free(directory);
+
     try paths.requireOutputDirectory(io, directory);
+
     var collision: usize = 0;
+
     while (true) : (collision += 1) {
         const candidate = try paths.outputPath(allocator, config, source, extension, collision);
+
         if (config.mode == .overwrite or !paths.exists(io, candidate)) return candidate;
         allocator.free(candidate);
+
         if (collision >= 100_000) return error.TooManyCollisions;
     }
 }
 
-fn appendOutput(allocator: std.mem.Allocator, outputs: *OutputList, path: []const u8) !void {
+fn appendOutput(allocator: Allocator, outputs: *OutputList, path: []const u8) !void {
     const owned = try allocator.dupe(u8, path);
     errdefer allocator.free(owned);
+
     try outputs.values.append(allocator, owned);
 }

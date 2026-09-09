@@ -9,27 +9,33 @@ pub fn isImageExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".jpeg") or
         std.ascii.eqlIgnoreCase(extension, ".png") or
         std.ascii.eqlIgnoreCase(extension, ".bmp") or
+        std.ascii.eqlIgnoreCase(extension, ".avif") or
         std.ascii.eqlIgnoreCase(extension, ".tga");
 }
 
 pub fn classifyPath(io: std.Io, path: []const u8, stat: std.Io.File.Stat) !protocol.Kind {
     if (stat.kind == .directory) return .directory;
     if (stat.kind != .file) return error.UnsupportedFileKind;
+
     var header: [12]u8 = undefined;
+
     const length = readHeader(io, path, &header);
     if (length >= 5 and std.mem.eql(u8, header[0..5], "%PDF-")) return .pdf;
     if (length >= 4 and std.mem.eql(u8, header[0..4], "PK\x03\x04")) return .zip;
     if (length >= 3 and std.mem.eql(u8, header[0..3], "\xff\xd8\xff")) return .image;
     if (length >= 8 and std.mem.eql(u8, header[0..8], "\x89PNG\r\n\x1a\n")) return .image;
     if (length >= 2 and std.mem.eql(u8, header[0..2], "BM")) return .image;
+
     const extension = std.fs.path.extension(path);
     if (std.ascii.eqlIgnoreCase(extension, ".mp4")) return .video;
     if (std.ascii.eqlIgnoreCase(extension, ".pdf")) return .pdf;
     if (std.ascii.eqlIgnoreCase(extension, ".zip")) return .zip;
+
     if (isImageExtension(extension)) {
         if (length == 0) return .image;
         return error.UnknownType;
     }
+
     return error.UnknownType;
 }
 

@@ -4,6 +4,11 @@ const native_sdk = @import("native_sdk");
 const operations = @import("operations.zig");
 const protocol = @import("protocol.zig");
 
+const TestMsg = union(enum) {
+    channel: native_sdk.EffectChannelEvent,
+};
+const TestEffects = native_sdk.Effects(TestMsg);
+
 pub const max_workers: usize = 8;
 pub const max_jobs: usize = 128;
 pub const notification_bytes: usize = @sizeOf(u64);
@@ -429,4 +434,68 @@ test "job completions remain addressable after out of order arrival" {
 test "job notifications are bounded ids" {
     try std.testing.expectEqual(notification_bytes, @sizeOf(u64));
     try std.testing.expect(max_workers >= 1);
+}
+
+test "job pool completes an image conversion before shutdown" {
+    const allocator = std.testing.allocator;
+    const png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const png_size = std.base64.standard.Decoder.calcSizeForSlice(png_base64) catch unreachable;
+    const png = try allocator.alloc(u8, png_size);
+    defer allocator.free(png);
+    try std.base64.standard.Decoder.decode(png, png_base64);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/source.png", .{tmp.sub_path});
+    defer allocator.free(source);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.png", .data = png });
+
+    var fx = TestEffects.init(allocator);
+    defer fx.deinit();
+    fx.executor = .fake;
+    var pool: JobPool = undefined;
+    pool.init(allocator, std.testing.io);
+    defer pool.deinit();
+
+    const paths = [_][]const u8{source};
+    try pool.submitProcessing(&fx, &paths, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, TestEffects.channelMsg(.channel));
+
+    var delivered = false;
+    var attempts: usize = 0;
+    while (!delivered and attempts < 500) : (attempts += 1) {
+        if (fx.takeMsg()) |message| {
+            switch (message) {
+                .channel => |event| {
+                    try std.testing.expectEqual(native_sdk.EffectChannelEventKind.data, event.kind);
+                    try std.testing.expectEqual(notification_bytes, event.bytes.len);
+                    var bytes: [notification_bytes]u8 = undefined;
+                    @memcpy(&bytes, event.bytes);
+                    const id = std.mem.readInt(u64, &bytes, .little);
+                    var completion: Completion = undefined;
+                    try std.testing.expect(pool.take(.process, id, &completion));
+                    switch (completion.outcome) {
+                        .process => |*output| {
+                            try std.testing.expectEqual(@as(usize, 1), output.values.items.len);
+                        },
+                        .failed => return error.TestUnexpectedResult,
+                        else => return error.TestUnexpectedResult,
+                    }
+                    completion.deinit(allocator);
+                    pool.rearm(.process);
+                    delivered = true;
+                },
+            }
+        } else {
+            try std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+        }
+    }
+    try std.testing.expect(delivered);
+    try std.testing.expect(!pool.hasActiveBatch(.process));
+    pool.shutdown();
 }

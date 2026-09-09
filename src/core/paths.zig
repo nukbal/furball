@@ -11,12 +11,16 @@ pub fn outputDirectory(allocator: std.mem.Allocator, config: protocol.Config, so
 pub fn outputPath(allocator: std.mem.Allocator, config: protocol.Config, source: []const u8, extension: []const u8, collision: usize) ![]u8 {
     const directory = try outputDirectory(allocator, config, source);
     defer allocator.free(directory);
+
     const stem = std.fs.path.stem(source);
     if (stem.len == 0 or std.mem.eql(u8, stem, ".") or std.mem.eql(u8, stem, "..")) return error.InvalidSourceName;
+
     const suffix = if (collision == 0) "" else try std.fmt.allocPrint(allocator, " ({d})", .{collision});
     defer if (collision != 0) allocator.free(suffix);
+
     const filename = try std.fmt.allocPrint(allocator, "{s}{s}{s}.{s}", .{ stem, config.suffix, suffix, extension });
     defer allocator.free(filename);
+
     return std.fs.path.join(allocator, &.{ directory, filename });
 }
 

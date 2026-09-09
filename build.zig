@@ -39,9 +39,9 @@ fn addFfmpegPackageStep(b: *std.Build, ffmpeg_prefix: []const u8) void {
 fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: []const u8) void {
     const target = app.exe.root_module.resolved_target.?;
     const optimize = app.exe.root_module.optimize.?;
-    const mods = [2]*std.Build.Module{ app.exe.root_module, app.tests.root_module };
-    mods[0].link_libcpp = true;
-    mods[1].link_libcpp = true;
+    var mods = [2]*std.Build.Module{ app.exe.root_module, app.tests.root_module };
+    const mod_count: usize = if (mods[0] == mods[1]) 1 else 2;
+    for (mods[0..mod_count]) |module| module.link_libcpp = true;
 
     // mozjpeg
     const mozjpeg_dep = b.dependency("mozjpeg", .{});
@@ -54,7 +54,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         mod.addIncludePath(mozjpeg_dep.path("."));
         mod.addIncludePath(b.path("libs/mozjpeg"));
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("mozjpeg", mod.createModule());
             module.addIncludePath(mozjpeg_dep.path("."));
             module.addIncludePath(b.path("libs/mozjpeg"));
@@ -92,7 +92,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         mod.addIncludePath(dep.path("."));
         mod.addIncludePath(mozjpeg_dep.path("."));
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("stb", mod.createModule());
             module.addIncludePath(dep.path("."));
             module.addCSourceFile(.{
@@ -116,7 +116,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         miniz_export.addValue("MINIZ_EXPORT", void, {});
         mod.addConfigHeader(miniz_export);
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("miniz", mod.createModule());
             module.addIncludePath(dep.path("."));
             module.addConfigHeader(miniz_export);
@@ -139,7 +139,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         // use miniz zlib compatitable layer
         mod.addIncludePath(b.path("libs/zlib"));
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("pdfio", mod.createModule());
             module.addIncludePath(dep.path("."));
             module.addIncludePath(ttf_dep.path("."));
@@ -167,7 +167,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         mod.addIncludePath(dep.path("src"));
         if (target.result.os.tag != .windows) mod.linkSystemLibrary("pthread", .{});
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("ncnn", mod.createModule());
             module.addIncludePath(dep.path("src"));
             module.addIncludePath(b.path("libs/ncnn"));
@@ -197,7 +197,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
         });
         mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ ffmpeg_prefix, "include" }) });
 
-        for (mods) |module| {
+        for (mods[0..mod_count]) |module| {
             module.addImport("ffmpeg", mod.createModule());
             module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ ffmpeg_prefix, "include" }) });
             if (target.result.os.tag == .macos) {

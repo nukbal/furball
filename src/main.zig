@@ -116,9 +116,12 @@ pub const App = struct {
     fn presentDialog(self: *App, runtime: *native_sdk.Runtime) !void {
         if (self.app.model.dialog == .none) return;
         if (self.app.model.dialog_serial == self.handled_dialog_serial) return;
+
         self.handled_dialog_serial = self.app.model.dialog_serial;
+
         const dialog = self.app.model.dialog;
         var buffer: [native_sdk.platform.max_dialog_paths_bytes]u8 = undefined;
+
         const result = runtime.showOpenDialog(.{
             .title = if (dialog == .files) "파일 고르기" else "저장 폴더",
             .default_path = if (dialog == .files) self.app.model.defaultPath() else self.app.model.outputPath(),
@@ -128,25 +131,31 @@ pub const App = struct {
             try self.app.dispatch(runtime, 1, .dialog_cancelled);
             return;
         };
+
         if (result.count == 0) {
             try self.app.dispatch(runtime, 1, .dialog_cancelled);
             return;
         }
+
         try self.app.dispatch(runtime, 1, .{ .dialog_ready = .{ .paths = result.paths, .count = result.count } });
     }
 
     fn revealOutput(self: *App, runtime: *native_sdk.Runtime) !void {
         if (self.app.model.reveal_serial == self.handled_reveal_serial) return;
+
         self.handled_reveal_serial = self.app.model.reveal_serial;
         const path = self.app.model.outputRevealPath();
+
         if (path.len == 0) {
             try self.app.dispatch(runtime, 1, .{ .reveal_done = false });
             return;
         }
+
         const ok = blk: {
             runtime.revealPath(path) catch break :blk false;
             break :blk true;
         };
+
         try self.app.dispatch(runtime, 1, .{ .reveal_done = ok });
     }
 };
@@ -155,11 +164,14 @@ pub fn main(init: std.process.Init) !void {
     var job_pool: JobPool = undefined;
     job_pool.init(std.heap.page_allocator, init.io);
     errdefer job_pool.deinit();
+
     const app_state = try std.heap.page_allocator.create(SdkApp);
     defer std.heap.page_allocator.destroy(app_state);
+
     var model = Model{};
     model.initPaths(init.io, init.environ_map);
     model.job_pool = &job_pool;
+
     app_state.* = SdkApp.init(std.heap.page_allocator, model, .{
         .name = "furball",
         .scene = shell_scene,
@@ -179,7 +191,9 @@ pub fn main(init: std.process.Init) !void {
     });
     defer app_state.deinit();
     defer job_pool.deinit();
+
     var app_wrapper = App{ .app = app_state, .jobs = &job_pool };
+
     try runner.runWithOptions(app_wrapper.getApp(), .{
         .app_name = "furball",
         .window_title = "Furball",

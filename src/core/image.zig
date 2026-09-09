@@ -6,6 +6,8 @@ const protocol = @import("protocol.zig");
 const realesrgan = @import("realesrgan.zig");
 const storage = @import("storage.zig");
 
+const Allocator = std.mem.Allocator;
+
 pub const max_input_bytes: usize = 512 * 1024 * 1024;
 pub const max_thumbnail_bytes: usize = 192 * 1024;
 pub const max_pixels: u64 = 200 * 1000 * 1000;
@@ -22,128 +24,152 @@ pub const ImageInfo = struct {
     }
 };
 
-pub const Processor = struct {
-    allocator: std.mem.Allocator,
+pub fn dimensions(alloc: Allocator, source: []const u8) !ImageInfo {
+    const bytes = try readBytes(source);
+    defer alloc.free(bytes);
+
+    return inspectMemory(bytes);
+}
+
+pub fn encode(
+    alloc: Allocator,
     io: std.Io,
-    ai_models: ?*const realesrgan.Models = null,
+    source: []const u8,
+    destination: []const u8,
+    config: protocol.Config,
+    nonce: u64,
+) !void {
+    const output = try encodeBytes(alloc, io, source, config, nonce);
+    defer alloc.free(output);
 
-    pub fn dimensions(self: Processor, source: []const u8) !ImageInfo {
-        const bytes = try self.readBytes(source);
-        defer self.allocator.free(bytes);
-        return inspectMemory(bytes);
-    }
+    try storage.writeAtomic(io, destination, output);
+}
 
-    pub fn encode(
-        self: Processor,
-        source: []const u8,
-        destination: []const u8,
-        config: protocol.Config,
-        nonce: u64,
-    ) !void {
-        const output = try self.encodeBytes(source, config, nonce);
-        defer self.allocator.free(output);
-        try storage.writeAtomic(self.io, destination, output);
-    }
+pub fn encodeBytes(alloc: Allocator, io: std.Io, source: []const u8, config: protocol.Config, nonce: u64, ai_models: ?*const realesrgan.Models) ![]u8 {
+    _ = nonce;
+    const input = try readBytes(alloc, io, source);
+    defer alloc.free(input);
 
-    pub fn encodeBytes(self: Processor, source: []const u8, config: protocol.Config, nonce: u64) ![]u8 {
-        _ = nonce;
-        const input = try self.readBytes(source);
-        defer self.allocator.free(input);
-        return self.encodeBytesFromMemory(input, config);
-    }
+    return encodeBytesFromMemory(alloc, input, config, ai_models);
+}
 
-    pub fn encodeBytesFromMemory(self: Processor, input: []const u8, config: protocol.Config) ![]u8 {
-        var source = try self.decode(input);
-        defer source.deinit();
+pub fn encodeBytesFromMemory(alloc: Allocator, input: []const u8, config: protocol.Config, ai_models: ?*const realesrgan.Models) ![]u8 {
+    var source = try decode(alloc, input);
+    defer source.deinit(alloc);
 
-        const requested = config.width;
-        if (source.shortEdge() < requested) {
-            if (config.ai) {
-                const models = self.ai_models orelse return error.AiUnavailable;
-                var enhanced_width: u32 = 0;
-                var enhanced_height: u32 = 0;
-                const enhanced_pixels = try models.upscale(
-                    self.allocator,
-                    source.pixels,
-                    source.width,
-                    source.height,
-                    requested,
-                    &enhanced_width,
-                    &enhanced_height,
-                );
-                var enhanced = DecodedImage{
-                    .allocator = self.allocator,
-                    .pixels = enhanced_pixels,
-                    .width = enhanced_width,
-                    .height = enhanced_height,
-                };
-                defer enhanced.deinit();
-                if (enhanced.shortEdge() > requested) try enhanced.resizeShortEdge(requested);
-                return enhanced.encodeJpeg(self.allocator, config.quality, null);
-            }
-            return source.encodeJpeg(self.allocator, config.quality, null);
+    const requested = config.width;
+    if (source.shortEdge() < requested) {
+        if (config.ai) {
+            const models = ai_models orelse return error.AiUnavailable;
+            var enhanced_width: u32 = 0;
+            var enhanced_height: u32 = 0;
+            const enhanced_pixels = try models.upscale(
+                alloc,
+                source.pixels,
+                source.width,
+                source.height,
+                requested,
+                &enhanced_width,
+                &enhanced_height,
+            );
+            var enhanced = DecodedImage{
+                .pixels = enhanced_pixels,
+                .width = enhanced_width,
+                .height = enhanced_height,
+            };
+            defer enhanced.deinit(alloc);
+
+            if (enhanced.shortEdge() > requested) try enhanced.resizeShortEdge(alloc, requested);
+
+            return enhanced.encodeJpeg(alloc, config.quality, null);
         }
-
-        if (source.shortEdge() > requested) try source.resizeShortEdge(requested);
-        return source.encodeJpeg(self.allocator, config.quality, null);
+        return source.encodeJpeg(alloc, config.quality, null);
     }
 
-    pub fn thumbnail(self: Processor, source: []const u8, destination: []const u8) !void {
-        const input = try self.readBytes(source);
-        defer self.allocator.free(input);
-        const output = try self.thumbnailBytes(input);
-        defer self.allocator.free(output);
-        try storage.writeAtomic(self.io, destination, output);
-    }
+    if (source.shortEdge() > requested) try source.resizeShortEdge(alloc, requested);
 
-    pub fn thumbnailBytes(self: Processor, input: []const u8) ![]u8 {
-        var decoded = try self.decode(input);
-        defer decoded.deinit();
-        try decoded.resizeShortEdge(250);
-        return decoded.encodeJpeg(self.allocator, 65, max_thumbnail_bytes);
-    }
+    return source.encodeJpeg(alloc, config.quality, null);
+}
 
-    fn decode(self: Processor, bytes: []const u8) !DecodedImage {
-        const info = try inspectMemory(bytes);
-        var width: c_int = 0;
-        var height: c_int = 0;
-        var source_channels: c_int = 0;
-        const decoded = stb.stbi_load_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &source_channels, @intCast(channels)) orelse return error.ImageDecodeFailed;
-        defer stb.stbi_image_free(@ptrCast(decoded));
-        const decoded_info = try checkedInfo(width, height);
-        if (decoded_info.width != info.width or decoded_info.height != info.height) return error.ImageDecodeFailed;
-        const byte_count = try byteCount(decoded_info);
-        const pixels = try self.allocator.alloc(u8, byte_count);
-        @memcpy(pixels, decoded[0..byte_count]);
-        return .{
-            .allocator = self.allocator,
-            .pixels = pixels,
-            .width = decoded_info.width,
-            .height = decoded_info.height,
-        };
-    }
+pub fn thumbnail(alloc: Allocator, io: std.Io, source: []const u8, destination: []const u8) !void {
+    const input = try readBytes(source);
+    defer alloc.free(input);
 
-    fn readBytes(self: Processor, source: []const u8) ![]u8 {
-        const stat = std.Io.Dir.cwd().statFile(self.io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
-        if (stat.kind == .sym_link or stat.kind != .file) return error.InvalidImageSource;
-        if (stat.size > max_input_bytes) return error.ImageInputTooLarge;
-        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, source, self.allocator, .limited(max_input_bytes + 1)) catch return error.ImageReadFailed;
-        if (bytes.len > max_input_bytes) {
-            self.allocator.free(bytes);
-            return error.ImageInputTooLarge;
-        }
-        return bytes;
+    const output = try thumbnailBytes(input);
+    defer alloc.free(output);
+
+    try storage.writeAtomic(io, destination, output);
+}
+
+pub fn thumbnailBytes(alloc: Allocator, input: []const u8) ![]u8 {
+    var decoded = try decode(alloc, input);
+    defer decoded.deinit(alloc);
+
+    try decoded.resizeShortEdge(alloc, 250);
+
+    return decoded.encodeJpeg(alloc, 65, max_thumbnail_bytes);
+}
+
+pub fn thumbnailBytesFromRgb(alloc: Allocator, width: u32, height: u32, pixels: []const u8) ![]u8 {
+    const checked_width = std.math.cast(c_int, width) orelse return error.ImageDimensionsTooLarge;
+    const checked_height = std.math.cast(c_int, height) orelse return error.ImageDimensionsTooLarge;
+    const info = try checkedInfo(checked_width, checked_height);
+    const byte_count = try byteCount(info);
+    if (pixels.len < byte_count) return error.ImageDecodeFailed;
+
+    const owned = try alloc.alloc(u8, byte_count);
+    @memcpy(owned, pixels[0..byte_count]);
+
+    var decoded = DecodedImage{ .pixels = owned, .width = info.width, .height = info.height };
+    defer decoded.deinit(alloc);
+
+    try decoded.resizeShortEdge(alloc, 250);
+
+    return decoded.encodeJpeg(alloc, 65, max_thumbnail_bytes);
+}
+
+fn decode(alloc: Allocator, bytes: []const u8) !DecodedImage {
+    const info = try inspectMemory(bytes);
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var source_channels: c_int = 0;
+
+    const decoded = stb.stbi_load_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &source_channels, @intCast(channels)) orelse return error.ImageDecodeFailed;
+    defer stb.stbi_image_free(@ptrCast(decoded));
+    const decoded_info = try checkedInfo(width, height);
+    if (decoded_info.width != info.width or decoded_info.height != info.height) return error.ImageDecodeFailed;
+
+    const byte_count = try byteCount(decoded_info);
+    const pixels = try alloc.alloc(u8, byte_count);
+    @memcpy(pixels, decoded[0..byte_count]);
+
+    return .{
+        .pixels = pixels,
+        .width = decoded_info.width,
+        .height = decoded_info.height,
+    };
+}
+
+fn readBytes(alloc: Allocator, io: std.Io, source: []const u8) ![]u8 {
+    const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
+    if (stat.kind == .sym_link or stat.kind != .file) return error.InvalidImageSource;
+    if (stat.size > max_input_bytes) return error.ImageInputTooLarge;
+
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, source, alloc, .limited(max_input_bytes + 1)) catch return error.ImageReadFailed;
+    if (bytes.len > max_input_bytes) {
+        alloc.free(bytes);
+        return error.ImageInputTooLarge;
     }
-};
+    return bytes;
+}
 
 const DecodedImage = struct {
-    allocator: std.mem.Allocator,
     pixels: []u8,
     width: u32,
     height: u32,
 
-    fn deinit(self: *DecodedImage) void {
-        self.allocator.free(self.pixels);
+    fn deinit(self: *DecodedImage, alloc: Allocator) void {
+        alloc.free(self.pixels);
         self.* = undefined;
     }
 
@@ -151,12 +177,14 @@ const DecodedImage = struct {
         return @min(self.width, self.height);
     }
 
-    fn resizeShortEdge(self: *DecodedImage, target: u32) !void {
+    fn resizeShortEdge(self: *DecodedImage, alloc: Allocator, target: u32) !void {
         const next = try resizeInfo(.{ .width = self.width, .height = self.height }, target);
         if (next.width == self.width and next.height == self.height) return;
+
         const byte_count = try byteCount(next);
-        const resized = try self.allocator.alloc(u8, byte_count);
-        errdefer self.allocator.free(resized);
+        const resized = try alloc.alloc(u8, byte_count);
+        errdefer alloc.free(resized);
+
         const input_stride = try stride(self.width);
         const output_stride = try stride(next.width);
         const resized_result = stb.stbir_resize_uint8_linear(
@@ -171,13 +199,14 @@ const DecodedImage = struct {
             @intCast(stb.STBIR_RGB),
         );
         if (resized_result == null) return error.ImageResizeFailed;
-        self.allocator.free(self.pixels);
+        alloc.free(self.pixels);
+
         self.pixels = resized;
         self.width = next.width;
         self.height = next.height;
     }
 
-    fn encodeJpeg(self: *const DecodedImage, allocator: std.mem.Allocator, quality: u8, max_output: ?usize) ![]u8 {
+    fn encodeJpeg(self: *const DecodedImage, alloc: Allocator, quality: u8, max_output: ?usize) ![]u8 {
         const stride_bytes = try stride(self.width);
         const row_bytes = try std.math.mul(usize, stride_bytes, self.height);
         if (self.pixels.len < row_bytes or self.width > 65_535 or self.height > 65_535) return error.ImageEncodeFailed;
@@ -231,7 +260,7 @@ const DecodedImage = struct {
             freeJpegBuffer(&error_context);
             return error.ImageOutputTooLarge;
         };
-        const result = allocator.alloc(u8, encoded_length) catch |err| {
+        const result = alloc.alloc(u8, encoded_length) catch |err| {
             freeJpegBuffer(&error_context);
             return err;
         };
@@ -317,18 +346,23 @@ test "image dimensions preserve aspect ratio while shrinking" {
 }
 
 test "png decode resize and mozjpeg encode complete" {
+    const alloc = std.testing.allocator;
     const encoded = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAYEAYAAADLwyN3AAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRP///////wlY99wAAAAHdElNRQfqCQkLLzg9WNCtAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI2LTA5LTA5VDExOjQ3OjU2KzAwOjAwRPnEJwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOS0wOVQxMTo0Nzo1NiswMDowMDWkfJsAAAAodEVYdGRhdGU6dGltZXN0YW1wADIwMjYtMDktMDlUMTE6NDc6NTYrMDA6MDBisV1EAAAAeElEQVRYw+2YwQ3AMAgDWykRKPlllq5Bf+HXztrROgaPcyZA6OwYn2tdV+Z3UF8bYbs91WMUL6C/1WOULsATTcAM241NgO1OJmCEs01whqUkQCZghLNNcCoI0SVwu0wQTYA8gP4LSAJKgvBbQBJQHwBvhNQJwoPQDwVkG0Y3AfsrAAAAAElFTkSuQmCC";
-    const input = try std.testing.allocator.alloc(u8, std.base64.standard.Decoder.calcSizeForSlice(encoded) catch unreachable);
-    defer std.testing.allocator.free(input);
+
+    const input = try alloc.alloc(u8, std.base64.standard.Decoder.calcSizeForSlice(encoded) catch unreachable);
+    defer alloc.free(input);
+
     try std.base64.standard.Decoder.decode(input, encoded);
-    const output = try (Processor{ .allocator = std.testing.allocator, .io = std.testing.io }).encodeBytesFromMemory(input, .{ .width = 12, .quality = 88, .ai = false });
-    defer std.testing.allocator.free(output);
+    const output = try encodeBytesFromMemory(input, .{ .width = 12, .quality = 88, .ai = false });
+    defer alloc.free(output);
+
     try std.testing.expect(output.len > 2);
     try std.testing.expectEqualSlices(u8, "\xff\xd8", output[0..2]);
     try std.testing.expectEqual(ImageInfo{ .width = 16, .height = 12 }, try inspectMemory(output));
 
-    var models = realesrgan.Models.init();
-    const ai_output = try (Processor{ .allocator = std.testing.allocator, .io = std.testing.io, .ai_models = &models }).encodeBytesFromMemory(input, .{ .width = 48, .quality = 88, .ai = true });
-    defer std.testing.allocator.free(ai_output);
+    const models = realesrgan.Models.init();
+    const ai_output = try encodeBytesFromMemory(alloc, input, .{ .width = 48, .quality = 88, .ai = true }, models);
+    defer alloc.free(ai_output);
+
     try std.testing.expectEqual(ImageInfo{ .width = 64, .height = 48 }, try inspectMemory(ai_output));
 }

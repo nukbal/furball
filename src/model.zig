@@ -190,7 +190,7 @@ pub const Model = struct {
     }
 
     pub fn chooseFilesLabel(_: *const Model) []const u8 {
-        return "파일 고르기";
+        return "파일 선택";
     }
     pub fn chooseOutputLabel(_: *const Model) []const u8 {
         return "저장 폴더";
@@ -256,8 +256,8 @@ pub const Model = struct {
     pub fn aiEnabled(model: *const Model) bool {
         return model.config.ai;
     }
-    pub fn processLabel(_: *const Model) []const u8 {
-        return "변환 시작";
+    pub fn processLabel(modal: *const Model) []const u8 {
+        return if (modal.isProcessing()) "변환 중..." else "변환 시작";
     }
     pub fn clearLabel(_: *const Model) []const u8 {
         return "모두 지우기";
@@ -284,10 +284,10 @@ pub const Model = struct {
         return "저장 방식";
     }
     pub fn folderModeLabel(_: *const Model) []const u8 {
-        return "폴더 처리";
+        return "다수 파일 처리 방식";
     }
     pub fn individualLabel(_: *const Model) []const u8 {
-        return "개별 파일";
+        return "개별 처리";
     }
     pub fn pdfLabel(_: *const Model) []const u8 {
         return "PDF";
@@ -296,7 +296,7 @@ pub const Model = struct {
         return "ZIP";
     }
     pub fn pathLabel(_: *const Model) []const u8 {
-        return "별도 폴더에 저장";
+        return "지정 위치에 저장";
     }
     pub fn overwriteLabel(_: *const Model) []const u8 {
         return "원본 덮어쓰기";
@@ -489,6 +489,16 @@ pub const Model = struct {
         model.thumbnail_pending = 0;
     }
 
+    fn prepareForLoad(model: *Model, fx: *Effects) bool {
+        if (model.isProcessing()) return false;
+        model.clearItems(fx);
+        model.inspect_cancel_pending = false;
+        model.process_cancel_pending = false;
+        model.inspecting = false;
+        model.processing = false;
+        return true;
+    }
+
     fn addPath(model: *Model, path: []const u8, fx: *Effects) void {
         _ = fx;
         if (model.isProcessing() or path.len == 0 or path.len > max_path_bytes or model.root_count >= max_paths) return;
@@ -534,6 +544,10 @@ pub const Model = struct {
             model.dialog = .none;
             return;
         }
+        if (!model.prepareForLoad(fx)) {
+            model.dialog = .none;
+            return;
+        }
         var start: usize = 0;
         for (model.dialog_buffer[0..model.dialog_len], 0..) |byte, index| {
             if (byte != '\n') continue;
@@ -552,7 +566,7 @@ pub const Model = struct {
 
     fn rootPaths(model: *const Model, paths: *[max_paths][]const u8) usize {
         var count: usize = 0;
-        for (model.items[0..model.item_count]) |item| {
+        for (model.items[0..model.item_count]) |*item| {
             if (item.depth != 0) continue;
             paths[count] = item.path();
             count += 1;
@@ -876,6 +890,7 @@ pub const Model = struct {
             },
             .dialog_cancelled => model.dialog = .none,
             .dropped => |drop| {
+                if (!model.prepareForLoad(fx)) return;
                 for (drop.paths) |path| model.addPath(path, fx);
                 model.startInspection(fx);
             },

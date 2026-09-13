@@ -2,7 +2,7 @@ const std = @import("std");
 
 const c = @import("miniz");
 const kind = @import("kind.zig");
-const natural = @import("natural.zig");
+const sort = @import("sort.zig");
 const protocol = @import("protocol.zig");
 
 pub const max_entries: usize = 100_000;
@@ -149,7 +149,7 @@ pub const Archive = struct {
     }
 
     fn less(self: *const Archive, a: usize, b: usize) bool {
-        const order = natural.compare(self.entries[a].name, self.entries[b].name);
+        const order = sort.compare(self.entries[a].name, self.entries[b].name);
         return if (order == .eq) a < b else order == .lt;
     }
 
@@ -164,7 +164,7 @@ pub const Archive = struct {
         var first: ?*const Entry = null;
         for (self.entries) |*entry| {
             if (entry.is_dir or entry.kind != .image) continue;
-            if (first == null or natural.compare(entry.name, first.?.name) == .lt) first = entry;
+            if (first == null or sort.compare(entry.name, first.?.name) == .lt) first = entry;
         }
         return first;
     }

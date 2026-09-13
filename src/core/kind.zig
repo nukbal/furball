@@ -9,8 +9,6 @@ pub fn isImageExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".jpeg") or
         std.ascii.eqlIgnoreCase(extension, ".png") or
         std.ascii.eqlIgnoreCase(extension, ".bmp") or
-        std.ascii.eqlIgnoreCase(extension, ".webp") or
-        std.ascii.eqlIgnoreCase(extension, ".avif") or
         std.ascii.eqlIgnoreCase(extension, ".tga");
 }
 

@@ -171,6 +171,27 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
             module.addImport("ncnn", mod.createModule());
             module.addIncludePath(dep.path("src"));
             module.addIncludePath(b.path("libs/ncnn"));
+            if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .arm) {
+                module.addIncludePath(dep.path("src/layer"));
+                module.addCSourceFiles(.{
+                    .root = dep.path("src"),
+                    .files = &.{
+                        "layer/arm/binaryop_arm.cpp",
+                        "layer/arm/cast_arm.cpp",
+                        "layer/arm/convolution_arm.cpp",
+                        "layer/arm/interp_arm.cpp",
+                        "layer/arm/padding_arm.cpp",
+                        "layer/arm/packing_arm.cpp",
+                        "layer/arm/pixelshuffle_arm.cpp",
+                        "layer/arm/prelu_arm.cpp",
+                        "layer/arm/scale_arm.cpp",
+                    },
+                    .flags = switch (target.result.os.tag) {
+                        .macos => &.{ "-std=c++11", "-Xpreprocessor", "-fopenmp", "-O3" },
+                        else => &.{ "-std=c++11", "-fopenmp", "-O3" },
+                    },
+                });
+            }
             module.addCSourceFiles(.{
                 .root = dep.path("src"),
                 .files = &.{
@@ -179,10 +200,11 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
                     "net.cpp", "option.cpp", "paramdict.cpp", "simpleomp.cpp",
                     "layer/binaryop.cpp", "layer/cast.cpp", "layer/convolution.cpp", "layer/input.cpp", "layer/interp.cpp",
                     "layer/padding.cpp", "layer/pixelshuffle.cpp", "layer/prelu.cpp", "layer/scale.cpp", "layer/split.cpp",
+                    "layer/packing.cpp",
                 },
                 .flags = switch (target.result.os.tag) {
-                    .macos => &.{ "-std=c++11", "-Xpreprocessor", "-fopenmp" },
-                    else => &.{ "-std=c++11", "-fopenmp" },
+                    .macos => &.{ "-std=c++11", "-Xpreprocessor", "-fopenmp", "-O3" },
+                    else => &.{ "-std=c++11", "-fopenmp", "-O3" },
                 },
             });
         }
@@ -227,6 +249,8 @@ pub fn build(b: *std.Build) void {
         .main = "src/main.zig",
         .terminal_sessions = false,
     });
+    const test_filter = b.option([]const u8, "test-filter", "Run only tests whose names contain this text");
+    app.tests.filters = if (test_filter) |filter| b.dupeStrings(&.{filter}) else &.{};
     const ffmpeg_prefix = ffmpegPrefix(b, app.exe.root_module.resolved_target.?);
     addRawLibraries(b, app, ffmpeg_prefix);
     addFfmpegPackageStep(b, ffmpeg_prefix);

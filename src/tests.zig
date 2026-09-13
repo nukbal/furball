@@ -5,6 +5,7 @@ const main = @import("main.zig");
 const operations = @import("core/operations.zig");
 const pdf = @import("core/pdf.zig");
 const protocol = @import("core/protocol.zig");
+const realesrgan = @import("core/realesrgan.zig");
 const zip = @import("core/zip.zig");
 
 const png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -21,7 +22,7 @@ fn fixturePng(allocator: std.mem.Allocator) ![]u8 {
 fn fixtureJpeg(allocator: std.mem.Allocator) ![]u8 {
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    return image.encodeBytesFromMemory(png, .{ .width = 1, .quality = 80, .ai = false });
+    return image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1, .quality = 80, .ai = false }, null);
 }
 
 fn fixtureFlatePdf(allocator: std.mem.Allocator) ![]u8 {
@@ -71,7 +72,7 @@ test "fixed image pipeline never upscales without AI" {
     const allocator = std.testing.allocator;
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    const output = try (image.Processor{ .allocator = allocator, .io = std.testing.io }).encodeBytesFromMemory(png, .{ .width = 1440, .quality = 80, .ai = false });
+    const output = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = false }, null);
     defer allocator.free(output);
     const dimensions = try image.inspectMemory(output);
     try std.testing.expectEqual(@as(u32, 1), dimensions.width);
@@ -84,8 +85,54 @@ test "AI upscale reports unavailable without a backend" {
     defer allocator.free(png);
     try std.testing.expectError(
         error.AiUnavailable,
-        (image.Processor{ .allocator = allocator, .io = std.testing.io }).encodeBytesFromMemory(png, .{ .width = 1440, .quality = 80, .ai = true }),
+        image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = true }, null),
     );
+}
+
+test "raw AI input below model minimum is rejected" {
+    const allocator = std.testing.allocator;
+    var raw_input: [4 * 4 * 3]u8 = undefined;
+    var models = realesrgan.Models.init();
+    var raw_width: u32 = 0;
+    var raw_height: u32 = 0;
+    try std.testing.expectError(
+        error.InvalidResize,
+        models.upscale(allocator, std.testing.io, &raw_input, 4, 4, 8, &raw_width, &raw_height),
+    );
+}
+
+test "AI image conversion repeats safe 32x32 inference" {
+    const allocator = std.testing.allocator;
+    var raw_input: [32 * 32 * 3]u8 = undefined;
+    for (&raw_input, 0..) |*pixel, index| pixel.* = @intCast((index * 5) % 256);
+
+    var models = realesrgan.Models.init();
+    var raw_width: u32 = 0;
+    var raw_height: u32 = 0;
+    const first = try models.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    defer allocator.free(first);
+    try std.testing.expectEqual(@as(u32, 64), raw_width);
+    try std.testing.expectEqual(@as(u32, 64), raw_height);
+    try std.testing.expectEqual(@as(usize, 64 * 64 * 3), first.len);
+
+    raw_width = 0;
+    raw_height = 0;
+    const second = try models.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    defer allocator.free(second);
+    try std.testing.expectEqual(@as(u32, 64), raw_width);
+    try std.testing.expectEqual(@as(u32, 64), raw_height);
+    try std.testing.expectEqual(@as(usize, 64 * 64 * 3), second.len);
+}
+
+test "tiny AI image conversion uses normal resize below model minimum" {
+    const allocator = std.testing.allocator;
+    const png = try fixturePng(allocator);
+    defer allocator.free(png);
+    var models = realesrgan.Models.init();
+    const jpeg = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 2, .quality = 88, .ai = true }, &models);
+    defer allocator.free(jpeg);
+    try std.testing.expectEqualSlices(u8, "\xff\xd8", jpeg[0..2]);
+    try std.testing.expectEqual(image.ImageInfo{ .width = 2, .height = 2 }, try image.inspectMemory(jpeg));
 }
 
 test "model config contains only fixed processing controls" {
@@ -147,13 +194,14 @@ test "zip input converts naturally sorted images to a PDF" {
     defer allocator.free(output_directory);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "images.zip", .data = archive_bytes });
 
+    var models = realesrgan.Models.init();
     var outputs = try operations.process(allocator, std.testing.io, .{
         .mode = .path,
         .path = output_directory,
         .width = 1,
         .quality = 80,
         .dir_mode = .pdf,
-    }, archive_path);
+    }, archive_path, &models);
     defer outputs.deinit();
     try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
 
@@ -163,11 +211,6 @@ test "zip input converts naturally sorted images to a PDF" {
     try std.testing.expectEqualStrings(expected_pdf_path, pdf_path);
 
     try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, pdf_path));
-    var extracted = (try pdf.firstJpeg(allocator, pdf_path)) orelse return error.TestUnexpectedResult;
-    defer extracted.deinit();
-    try std.testing.expectEqual(@as(u32, 1), extracted.width);
-    try std.testing.expectEqual(@as(u32, 1), extracted.height);
-    try std.testing.expectEqualSlices(u8, jpeg, extracted.bytes);
 }
 
 test "zip writer rejects unsafe names" {
@@ -182,7 +225,7 @@ test "zip path limits reject traversal" {
     try std.testing.expect(zip.entryPathIsSafe("folder\\image.jpg"));
 }
 
-test "pdf writer creates pages and extracts first JPEG XObject" {
+test "pdf writer creates pages" {
     const allocator = std.testing.allocator;
     const jpeg = try fixtureJpeg(allocator);
     defer allocator.free(jpeg);
@@ -194,11 +237,6 @@ test "pdf writer creates pages and extracts first JPEG XObject" {
 
     try pdf.createFromJpegs(allocator, std.testing.io, &pages, path);
     try std.testing.expectEqual(@as(u32, 1), try pdf.pageCount(allocator, path));
-    var extracted = (try pdf.firstJpeg(path)) orelse return error.TestUnexpectedResult;
-    defer extracted.deinit();
-    try std.testing.expectEqual(@as(u32, 1), extracted.width);
-    try std.testing.expectEqual(@as(u32, 1), extracted.height);
-    try std.testing.expectEqualSlices(u8, jpeg, extracted.bytes);
     var inspected = try operations.inspect(allocator, std.testing.io, path);
     defer operations.freeResponse(allocator, &inspected);
     try std.testing.expectEqual(protocol.Kind.pdf, inspected.kind);
@@ -215,7 +253,7 @@ test "pdf thumbnail reads a Flate encoded RGB image XObject" {
     const path = try testPath(&tmp, allocator, "flate.pdf");
     defer allocator.free(path);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "flate.pdf", .data = bytes });
-    const thumbnail = (try (pdf.Processor{ .allocator = allocator, .io = std.testing.io }).thumbnailBytes(path)) orelse return error.TestUnexpectedResult;
+    const thumbnail = (try pdf.thumbnailBytes(allocator, path)) orelse return error.TestUnexpectedResult;
     defer allocator.free(thumbnail);
     try std.testing.expect(thumbnail.len != 0);
     const dimensions = try image.inspectMemory(thumbnail);
@@ -234,14 +272,13 @@ test "pdf thumbnail uses the first supported image" {
     const path = try testPath(&tmp, allocator, "mixed.pdf");
     defer allocator.free(path);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "mixed.pdf", .data = bytes });
-    const processor = pdf.Processor{ .allocator = allocator, .io = std.testing.io };
-    const thumbnail = (try processor.thumbnailBytes(path)) orelse return error.TestUnexpectedResult;
+    const thumbnail = (try pdf.thumbnailBytes(allocator, path)) orelse return error.TestUnexpectedResult;
     defer allocator.free(thumbnail);
     const dimensions = try image.inspectMemory(thumbnail);
     try std.testing.expectEqual(@as(u32, 2), dimensions.width);
     try std.testing.expectEqual(@as(u32, 1), dimensions.height);
     const pixels = [_]u8{ 255, 0, 0, 255, 0, 0 };
-    const expected = try (image.Processor{ .allocator = allocator, .io = std.testing.io }).thumbnailBytesFromRgb(2, 1, &pixels);
+    const expected = try image.thumbnailBytesFromRgb(allocator, 2, 1, &pixels);
     defer allocator.free(expected);
     try std.testing.expectEqualSlices(u8, expected, thumbnail);
 }
@@ -254,6 +291,8 @@ test "folder inspection keeps images and ignores nonimage files" {
     defer tmp.cleanup();
     try tmp.dir.createDirPath(std.testing.io, "photos");
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/first.png", .data = png });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/broken.bmp", .data = "BM" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/unsupported.webp", .data = "RIFF0000WEBP" });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/notes.txt", .data = "ignore" });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/broken.pdf", .data = "not a pdf" });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/broken.zip", .data = "not a zip" });

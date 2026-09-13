@@ -20,7 +20,7 @@ pub fn createZip(
     files: []const FileEntry,
     destination: []const u8,
     config: protocol.Config,
-    ai_models: ?*const realesrgan.Models,
+    ai_models: ?*realesrgan.Models,
 ) !void {
     if (files.len == 0) return error.EmptyArchive;
     var output = std.ArrayList(zip.ImageEntry).empty;

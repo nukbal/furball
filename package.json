@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "dev": "zig build run",
+    "dev": "zig build run -Dtrace=off",
     "package": "zig build package",
     "sdk": "zig build sdk",
     "test": "zig build test"

@@ -108,7 +108,7 @@ pub fn toPdf(
     sources: []const []const u8,
     destination: []const u8,
     config: protocol.Config,
-    ai_models: ?*const realesrgan.Models,
+    ai_models: ?*realesrgan.Models,
 ) !void {
     if (sources.len == 0) return error.EmptyPdf;
 

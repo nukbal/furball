@@ -3,7 +3,7 @@ const std = @import("std");
 const archive = @import("archive.zig");
 const image = @import("image.zig");
 const kind = @import("kind.zig");
-const natural = @import("natural.zig");
+const sort = @import("sort.zig");
 const paths = @import("paths.zig");
 const pdf = @import("pdf.zig");
 const protocol = @import("protocol.zig");
@@ -54,7 +54,12 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
     switch (file_kind) {
         .directory => {
             result.children = try inspectDirectory(allocator, io, source, depth + 1);
-            for (result.children) |child| result.count += imageCount(child);
+            result.size = 0;
+            for (result.children) |child| {
+                result.count += imageCount(child);
+                result.size += child.size;
+            }
+
             for (result.children) |child| {
                 if (child.thumbnail) |thumbnail| {
                     result.thumbnail = try allocator.dupe(u8, thumbnail);
@@ -66,7 +71,10 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
                 }
             }
         },
-        .image => result.thumbnail = try allocator.dupe(u8, source),
+        .image => {
+            _ = try image.dimensions(allocator, io, source);
+            result.thumbnail = try allocator.dupe(u8, source);
+        },
         .pdf => {
             result.count = pdf.pageCount(allocator, source) catch return error.InvalidPdf;
             if (try pdf.thumbnailBytes(allocator, source)) |thumbnail| {
@@ -122,7 +130,10 @@ fn inspectDirectory(allocator: Allocator, io: std.Io, source: []const u8, depth:
         if (child_kind != .image and child_kind != .directory) continue;
 
         const child = inspectNode(allocator, io, child_path, depth) catch |err| switch (err) {
-            error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink => continue,
+            error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink,
+            error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge,
+            error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge,
+            error.ImageReadFailed => continue,
             else => return err,
         };
         if (child.kind != .image and child.kind != .directory) {
@@ -195,7 +206,7 @@ fn encodeThumbnail(allocator: Allocator, bytes: []const u8) ![]u8 {
 fn lessNode(_: void, a: protocol.InspectNode, b: protocol.InspectNode) bool {
     if (a.kind == .directory and b.kind != .directory) return true;
     if (b.kind == .directory and a.kind != .directory) return false;
-    return natural.compare(a.name, b.name) == .lt;
+    return sort.compare(a.name, b.name) == .lt;
 }
 
 pub fn freeResponse(allocator: Allocator, response: *protocol.InspectResponse) void {
@@ -212,7 +223,7 @@ fn freeNode(allocator: Allocator, node: protocol.InspectNode) void {
     if (node.children.len != 0) allocator.free(node.children);
 }
 
-pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source: []const u8) !OutputList {
+pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source: []const u8, models: *realesrgan.Models) !OutputList {
     try protocol.validateConfig(config);
 
     const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
@@ -222,8 +233,7 @@ pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source
     var outputs = OutputList{ .allocator = allocator };
     errdefer outputs.deinit();
 
-    const models = realesrgan.Models.init();
-    const ai_models: ?*const realesrgan.Models = if (config.ai) &models else null;
+    const ai_models: ?*realesrgan.Models = if (config.ai) models else null;
 
     switch (try kind.classifyPath(io, source, stat)) {
         .image => try processImage(allocator, io, source, config, &outputs, ai_models),
@@ -238,7 +248,7 @@ pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source
     return outputs;
 }
 
-fn processImage(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*const realesrgan.Models) !void {
+fn processImage(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*realesrgan.Models) !void {
     const destination = try target(allocator, io, source, config, "jpg");
     defer allocator.free(destination);
 
@@ -265,7 +275,7 @@ fn processZip(
     source: []const u8,
     config: protocol.Config,
     outputs: *OutputList,
-    ai_models: ?*const realesrgan.Models,
+    ai_models: ?*realesrgan.Models,
 ) !void {
     if (config.dir_mode != .pdf) return error.UnsupportedSource;
 
@@ -288,7 +298,7 @@ fn processZip(
         const input = try parsed.readEntry(entry);
         defer allocator.free(input);
 
-        const encoded = try image.encodeBytesFromMemory(allocator, input, config, ai_models);
+        const encoded = try image.encodeBytesFromMemory(allocator, io, input, config, ai_models);
         const dimensions = image.inspectMemory(encoded) catch |err| {
             allocator.free(encoded);
             return err;
@@ -307,7 +317,7 @@ fn processZip(
     try appendOutput(allocator, outputs, destination);
 }
 
-fn processDirectory(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*const realesrgan.Models) !void {
+fn processDirectory(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*realesrgan.Models) !void {
     var entries = try collectDirectory(allocator, io, source);
     defer entries.deinit(allocator);
 
@@ -379,6 +389,15 @@ fn collectDirectory(allocator: Allocator, io: std.Io, root: []const u8) !EntryLi
             allocator.free(source);
             continue;
         }
+        _ = image.dimensions(allocator, io, source) catch |err| switch (err) {
+            error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge,
+            error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge,
+            error.SourceNotFound, error.ImageReadFailed => {
+                allocator.free(source);
+                continue;
+            },
+            else => return err,
+        };
         const relative = allocator.dupe(u8, entry.path) catch |err| {
             allocator.free(source);
             return err;
@@ -394,7 +413,7 @@ fn collectDirectory(allocator: Allocator, io: std.Io, root: []const u8) !EntryLi
 }
 
 fn lessFileEntry(_: void, a: archive.FileEntry, b: archive.FileEntry) bool {
-    return natural.compare(a.relative, b.relative) == .lt;
+    return sort.compare(a.relative, b.relative) == .lt;
 }
 
 fn target(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, extension: []const u8) ![]u8 {

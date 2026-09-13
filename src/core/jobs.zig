@@ -3,6 +3,7 @@ const native_sdk = @import("native_sdk");
 
 const operations = @import("operations.zig");
 const protocol = @import("protocol.zig");
+const realesrgan = @import("realesrgan.zig");
 
 const TestMsg = union(enum) {
     channel: native_sdk.EffectChannelEvent,
@@ -363,7 +364,8 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
             pool.complete(job, .{ .inspect = response });
         },
         .process => {
-            const result = operations.process(pool.allocator, pool.io, job.config, job.source) catch |err| {
+            var models = realesrgan.Models.init();
+            const result = operations.process(pool.allocator, pool.io, job.config, job.source, &models) catch |err| {
                 pool.complete(job, .{ .failed = err });
                 pool.finishJob(job);
                 return;

@@ -63,7 +63,6 @@ pub const DialogSelection = struct {
 pub const Msg = union(enum) {
     choose_files,
     choose_output,
-    clear_files,
     remove_file: u16,
     select_item: u16,
     process,
@@ -190,19 +189,6 @@ pub const Model = struct {
     pub fn chromeTop(model: *const Model) f32 {
         return model.chrome_top;
     }
-
-    pub fn chooseFilesLabel(_: *const Model) []const u8 {
-        return "파일 선택";
-    }
-    pub fn chooseOutputLabel(_: *const Model) []const u8 {
-        return "저장 폴더";
-    }
-    pub fn emptyTitle(_: *const Model) []const u8 {
-        return "파일을 추가해주세요";
-    }
-    pub fn emptyHint(_: *const Model) []const u8 {
-        return "이미지, PDF, ZIP, MP4, 폴더를 끌어다 놓거나 파일을 골라주세요";
-    }
     pub fn outputLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
         if (model.output_len == 0) return "저장 위치를 선택해주세요";
         return std.fmt.allocPrint(arena, "저장 위치: {s}", .{model.outputPath()}) catch "저장 위치";
@@ -213,6 +199,9 @@ pub const Model = struct {
             if (item.depth != 0) continue;
             total_count += if (item.count == 0) 1 else item.count;
         }
+        if (model.item_count > 0 and model.items[0].kind == .pdf) {
+          return std.fmt.allocPrint(arena, "{d} 페이지", .{total_count}) catch "항목 정보";
+        }
         return std.fmt.allocPrint(arena, "{d}개 항목", .{total_count}) catch "항목 정보";
     }
     pub fn progressValue(model: *const Model) f32 {
@@ -220,10 +209,10 @@ pub const Model = struct {
         if (model.process_total == 0) return 0;
         return @as(f32, @floatFromInt(@min(model.process_completed, model.process_total))) / @as(f32, @floatFromInt(model.process_total));
     }
-    pub fn progressLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
-        if (model.processing) return std.fmt.allocPrint(arena, "변환 중 {d}/{d}", .{ @min(model.process_completed, model.process_total), model.process_total }) catch "변환 중";
-        if (model.hasOutput()) return std.fmt.allocPrint(arena, "변환 완료 · {d}개 결과", .{model.output_count}) catch "변환 완료";
-        return "대기 중";
+    pub fn processLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        if (model.processing) return std.fmt.allocPrint(arena, "변환 중... {d}/{d}", .{ @min(model.process_completed, model.process_total), model.process_total }) catch "변환 중";
+        if (model.hasOutput()) return "변환 완료";
+        return "변환 시작";
     }
     pub fn qualityFraction(model: *const Model) f32 {
         return @as(f32, @floatFromInt(model.config.quality)) / 100.0;
@@ -231,77 +220,11 @@ pub const Model = struct {
     pub fn qualityValue(model: *const Model, arena: std.mem.Allocator) []const u8 {
         return std.fmt.allocPrint(arena, "품질 {d}", .{model.config.quality}) catch "품질";
     }
-    pub fn suffixPlaceholder(_: *const Model) []const u8 {
-        return "예: -optimized";
-    }
-    pub fn widthPlaceholder(_: *const Model) []const u8 {
-        return "1440";
-    }
     pub fn qualityAccessibility(model: *const Model) []const u8 {
         return model.qualityLabel();
     }
-    pub fn chooseFilesHint(_: *const Model) []const u8 {
-        return "파일 또는 폴더를 선택";
-    }
-    pub fn fileListLabel(_: *const Model) []const u8 {
-        return "선택한 파일 목록";
-    }
-    pub fn removeLabel(_: *const Model) []const u8 {
-        return "파일 제거";
-    }
-    pub fn metadataLabel(_: *const Model) []const u8 {
-        return "파일 정보";
-    }
-    pub fn noPreview(_: *const Model) []const u8 {
-        return "미리보기가 없습니다";
-    }
     pub fn aiEnabled(model: *const Model) bool {
         return model.config.ai;
-    }
-    pub fn processLabel(modal: *const Model) []const u8 {
-        return if (modal.isProcessing()) "변환 중..." else "변환 시작";
-    }
-    pub fn clearLabel(_: *const Model) []const u8 {
-        return "모두 지우기";
-    }
-    pub fn outputRevealLabel(_: *const Model) []const u8 {
-        return "결과 폴더 열기";
-    }
-    pub fn settingsLabel(_: *const Model) []const u8 {
-        return "변환 설정";
-    }
-    pub fn suffixLabel(_: *const Model) []const u8 {
-        return "파일 이름 접미사";
-    }
-    pub fn qualityLabel(_: *const Model) []const u8 {
-        return "품질";
-    }
-    pub fn widthLabel(_: *const Model) []const u8 {
-        return "짧은 변 길이 (px)";
-    }
-    pub fn aiLabel(_: *const Model) []const u8 {
-        return "AI 업스케일";
-    }
-    pub fn modeLabel(_: *const Model) []const u8 {
-        return "저장 방식";
-    }
-    pub fn folderModeLabel(_: *const Model) []const u8 {
-        return "다수 파일 처리 방식";
-    }
-    pub fn individualLabel(_: *const Model) []const u8 {
-        return "개별 처리";
-    }
-    pub fn pdfLabel(_: *const Model) []const u8 {
-        return "PDF";
-    }
-    pub fn zipLabel(_: *const Model) []const u8 {
-        return "ZIP";
-    }
-    pub fn pathLabel(_: *const Model) []const u8 {
-        return "지정 위치에 저장";
-    }
-    pub fn overwriteLabel(_: *const Model) []const u8 {
-        return "원본 덮어쓰기";
     }
 
     pub fn isPathMode(model: *const Model) bool {
@@ -347,10 +270,18 @@ pub const Model = struct {
         return model.error_len != 0 and model.hasFiles();
     }
 
+    pub fn preview(model: *const Model, arena: std.mem.Allocator) []const Item {
+      if (model.item_count == 0) return &.{};
+      const res = arena.alloc(Item, 1) catch return &.{};
+      @memcpy(res, model.items[0..1]);
+      return res;
+    }
+
     pub fn visible(model: *const Model, arena: std.mem.Allocator) []const Item {
-        const result = arena.alloc(Item, model.item_count) catch return &.{};
-        @memcpy(result, model.items[0..model.item_count]);
-        return result;
+      if (model.item_count < 2) return &.{};
+      const result = arena.alloc(Item, model.item_count - 1) catch return &.{};
+      @memcpy(result, model.items[1..model.item_count]);
+      return result;
     }
 
     pub fn initPaths(model: *Model, io: std.Io, environ_map: *std.process.Environ.Map) void {
@@ -848,23 +779,6 @@ pub const Model = struct {
                 if (model.isProcessing()) return;
                 model.dialog = .output;
                 model.dialog_serial +%= 1;
-            },
-            .clear_files => {
-                if (model.job_pool) |pool| {
-                    const cancel_inspect = model.inspecting or pool.hasActiveBatch(.inspect);
-                    const cancel_process = model.processing or pool.hasActiveBatch(.process);
-                    if (cancel_inspect) pool.cancelInspection(fx);
-                    if (cancel_process) pool.cancelProcessing(fx);
-                    model.inspect_cancel_pending = cancel_inspect;
-                    model.process_cancel_pending = cancel_process;
-                } else {
-                    model.inspect_cancel_pending = false;
-                    model.process_cancel_pending = false;
-                }
-                model.clearItems(fx);
-                model.inspecting = false;
-                model.processing = false;
-                setStatus(model, "파일을 추가해주세요");
             },
             .remove_file => |root_index| {
                 if (model.isProcessing()) return;

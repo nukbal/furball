@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .native_sdk = .{
-            .url = "git+https://github.com/vercel-labs/native.git#31663e16b054f212f0377878eb901330bbc94b53",
-            .hash = "native_sdk-0.1.0-hzDzQowrsgLwH8sxOrPP3toUyhGRJ3eNIir1c6O_27pg",
+            .url = "git+https://github.com/vercel-labs/native.git#6b053188dc8ac415f602618be12717889cb0a986",
+            .hash = "native_sdk-0.1.0-hzDzQuBssgJRHbMhIt013yLtpIpuY-I5ZMxtT_KRzML_",
         },
         .stb = .{
             .url = "git+https://github.com/nothings/stb.git#2c980bb59875b0d32144a71867fbdebb2f77cd20",

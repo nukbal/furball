@@ -8,36 +8,31 @@
         <text size="sm" foreground="text_muted">{fileSummary}</text>
         <panel padding="12" background="surface" radius="lg">
           <column gap="8">
-            <for each="visible" key="path" as="preview">
-              <if test="{preview.selected}">
-                <row gap="10" cross="center">
-                  <if test="{preview.image_id != 0}">
-                    <image image="{preview.image_id}" width="160" height="120" label="{preview.name}" />
-                  </if>
-                  <else><icon name="eye" width="64" height="64" foreground="text_muted" /></else>
-                  <column grow="1" gap="3">
-                    <text wrap="false">{preview.name}</text>
-                    <text size="sm" foreground="text_muted">{preview.metadata}</text>
-                  </column>
-                  <button size="icon" variant="ghost" icon="x" on-press="remove_file:{preview.root_index}" label="{removeLabel}" disabled="{isProcessing}"></button>
-                </row>
-              </if>
+            <for each="preview" key="path" as="file">
+              <row gap="10" cross="center">
+                <if test="{file.image_id != 0}">
+                  <image image="{file.image_id}" width="160" height="180" label="{file.name}" />
+                </if>
+                <else><icon name="eye" width="64" height="64" foreground="text_muted" /></else>
+                <column grow="1" gap="3">
+                  <text wrap="false">{file.name}</text>
+                  <text size="sm" foreground="text_muted">{file.metadata}</text>
+                </column>
+                <button size="icon" variant="ghost" icon="x" on-press="remove_file:{file.root_index}" label="파일 삭제" disabled="{isProcessing}"></button>
+              </row>
             </for>
           </column>
         </panel>
-        <scroll grow="1" label="{fileListLabel}">
+        <scroll grow="1">
           <column gap="4">
             <for each="visible" key="path" as="file">
-              <list-item padding="9" gap="9" cross="center" selected="{file.selected}" role="treeitem" tree-level="{file.level}" on-press="select_item:{file.root_index}" on-change="select_item:{file.root_index}" label="{file.name}">
-                <if test="{file.image_id != 0}">
-                  <image image="{file.image_id}" width="22" height="22" label="{file.name}" />
-                </if>
-                <if test="{file.image_id == 0 and file.kind == 'directory'}">
+              <list-item padding="9" gap="9" cross="center" role="treeitem" tree-level="{file.level}" label="{file.name}">
+                <if test="{file.kind == 'directory'}">
                   <icon name="folder" width="22" height="22" foreground="text_muted" />
                 </if>
-                <if test="{file.image_id == 0 and file.kind != 'directory'}">
+                <else>
                   <icon name="file-text" width="22" height="22" foreground="text_muted" />
-                </if>
+                </else>
                 <column grow="1" gap="3">
                   <text wrap="false">{file.name}</text>
                   <text size="sm" foreground="text_muted">{file.metadata}</text>
@@ -50,63 +45,64 @@
       <else>
         <column grow="1" cross="center" main="center" gap="10">
           <icon name="folder-open" width="52" height="52" foreground="text_muted" />
-          <text size="lg">{emptyTitle}</text>
-          <text foreground="text_muted">{emptyHint}</text>
-          <button variant="primary" icon="plus" on-press="choose_files" label="{chooseFilesLabel}">{chooseFilesLabel}</button>
+          <text size="lg">파일을 추가해주세요</text>
+          <text foreground="text_muted">이미지, PDF, ZIP, MP4, 폴더를 끌어다 놓거나 파일을 골라주세요</text>
+          <button variant="primary" icon="plus" on-press="choose_files">파일 선택</button>
         </column>
       </else>
     </column>
-    <separator width="1" />
     <column width="256" gap="10">
-      <scroll grow="1" label="{settingsLabel}">
-      <column gap="12">
-        <panel padding="12" background="surface" radius="lg">
-          <column gap="8">
-            <row cross="center" gap="8">
-              <text grow="1">{modeLabel}</text>
-              <button size="sm" variant="outline" icon="folder" on-press="choose_output" label="{chooseOutputLabel}" disabled="{isProcessing}">{chooseOutputLabel}</button>
-            </row>
-            <text size="sm" foreground="text_muted" wrap="false">{outputLabel}</text>
-            <toggle-group gap="4" label="{modeLabel}">
-              <toggle-button size="sm" selected="{isPathMode}" on-toggle="mode_path" disabled="{controlsDisabled}">{pathLabel}</toggle-button>
-              <toggle-button size="sm" selected="{isOverwriteMode}" on-toggle="mode_overwrite" disabled="{controlsDisabled}">{overwriteLabel}</toggle-button>
-            </toggle-group>
-          </column>
-        </panel>
+      <scroll grow="1">
+        <column gap="12">
+          <panel padding="12" background="surface" radius="lg">
+            <column gap="8">
+              <row cross="center" gap="8">
+                <text grow="1">저장 방식</text>
+                <button size="sm" variant="outline" icon="folder" on-press="choose_output" disabled="{isProcessing}">
+                  파일 또는 폴더 선택
+                </button>
+              </row>
+              <text size="sm" foreground="text_muted" wrap="false">{outputLabel}</text>
+              <toggle-group gap="4">
+                <toggle-button size="sm" selected="{isPathMode}" on-toggle="mode_path" disabled="{controlsDisabled}">지정 위치에 저장</toggle-button>
+                <toggle-button size="sm" selected="{isOverwriteMode}" on-toggle="mode_overwrite" disabled="{controlsDisabled}">원본 덮어쓰기</toggle-button>
+              </toggle-group>
+            </column>
+          </panel>
 
-        <panel padding="12" background="surface" radius="lg">
-          <column gap="10">
-            <text size="sm" foreground="text_muted">{widthLabel}</text>
-            <text-field text="{width}" placeholder="{widthPlaceholder}" on-input="edit_width" label="{widthLabel}" disabled="{controlsDisabled}" />
-            <slider value="{qualityFraction}" on-change="quality_changed" label="{qualityAccessibility}" disabled="{controlsDisabled}" />
-            <text size="sm" foreground="text_muted">{qualityValue}</text>
-            <text size="sm" foreground="text_muted">{suffixLabel}</text>
-            <text-field text="{suffix}" placeholder="{suffixPlaceholder}" on-input="edit_suffix" label="{suffixLabel}" disabled="{controlsDisabled}" />
-            <checkbox checked="{aiEnabled}" on-toggle="toggle_ai" text="{aiLabel}" label="{aiLabel}" disabled="{controlsDisabled}" />
-          </column>
-        </panel>
+          <panel padding="12" background="surface" radius="lg">
+            <column gap="10">
+              <text size="sm" foreground="text_muted">짧은 변 길이 (px)</text>
+              <text-field text="{width}" placeholder="1440" on-input="edit_width" disabled="{controlsDisabled}" />
+              <slider label="품질" value="{qualityFraction}" on-change="quality_changed" disabled="{controlsDisabled}" />
+              <text size="sm" foreground="text_muted">{qualityValue}</text>
+              <text size="sm" foreground="text_muted">파일 이름 접미사</text>
+              <text-field text="{suffix}" placeholder="예: -optimized" on-input="edit_suffix" disabled="{controlsDisabled}" />
+              <checkbox checked="{aiEnabled}" on-toggle="toggle_ai" text="AI 업스케일" disabled="{controlsDisabled}" />
+            </column>
+          </panel>
 
-        <panel padding="12" background="surface" radius="lg">
-          <column gap="10">
-            <text size="sm" foreground="text_muted">MP4 입력은 GIF로 변환됩니다</text>
-            <text size="sm" foreground="text_muted">{folderModeLabel}</text>
-            <toggle-group gap="4" label="{folderModeLabel}">
-              <toggle-button size="sm" selected="{isDirNone}" on-toggle="dir_none" disabled="{controlsDisabled}">{individualLabel}</toggle-button>
-              <toggle-button size="sm" selected="{isDirPdf}" on-toggle="dir_pdf" disabled="{controlsDisabled}">{pdfLabel}</toggle-button>
-              <toggle-button size="sm" selected="{isDirZip}" on-toggle="dir_zip" disabled="{controlsDisabled}">{zipLabel}</toggle-button>
-            </toggle-group>
-          </column>
-        </panel>
-      </column>
+          <panel padding="12" background="surface" radius="lg">
+            <column gap="10">
+              <text size="sm" foreground="text_muted">MP4 입력은 GIF로 변환됩니다</text>
+              <text size="sm" foreground="text_muted">다수 파일 처리 방식</text>
+              <toggle-group gap="4">
+                <toggle-button size="sm" selected="{isDirNone}" on-toggle="dir_none" disabled="{controlsDisabled}">개별 처리</toggle-button>
+                <toggle-button size="sm" selected="{isDirPdf}" on-toggle="dir_pdf" disabled="{controlsDisabled}">PDF</toggle-button>
+                <toggle-button size="sm" selected="{isDirZip}" on-toggle="dir_zip" disabled="{controlsDisabled}">ZIP</toggle-button>
+              </toggle-group>
+            </column>
+          </panel>
+        </column>
       </scroll>
       <panel padding="12" background="surface" radius="lg">
         <column gap="8">
-          <progress value="{progressValue}" label="{progressLabel}" />
+          <progress value="{progressValue}" />
           <text size="sm" foreground="text_muted">{status}</text>
           <if test="{hasError}"><text foreground="destructive">{errorText}</text></if>
           <row gap="8">
             <button grow="1" variant="primary" on-press="process" disabled="{processDisabled}" label="{processLabel}">{processLabel}</button>
-            <if test="{hasOutput}"><button variant="outline" icon="external-link" on-press="reveal_output" label="{outputRevealLabel}">{outputRevealLabel}</button></if>
+            <if test="{hasOutput}"><button variant="outline" icon="external-link" on-press="reveal_output">결과 폴더 열기</button></if>
           </row>
         </column>
       </panel>

@@ -390,8 +390,7 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
             pool.complete(job, .{ .inspect = response });
         },
         .process => {
-            var models = realesrgan.Models.init();
-            const result = operations.process(pool.allocator, pool.io, job.config, job.source, &models, .{
+            const result = operations.process(pool.allocator, pool.io, job.config, job.source, .{
                 .context = job,
                 .advance_fn = reportProgress,
             }) catch |err| {

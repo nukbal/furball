@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const image = @import("image.zig");
+const image_batch = @import("image_batch.zig");
 const protocol = @import("protocol.zig");
 const storage = @import("storage.zig");
 const zip = @import("zip.zig");
@@ -20,39 +20,40 @@ pub fn createZip(
     files: []const FileEntry,
     destination: []const u8,
     config: protocol.Config,
-    ai_models: ?*realesrgan.Models,
     progress: ?protocol.Progress,
 ) !void {
     if (files.len == 0) return error.EmptyArchive;
-    var output = std.ArrayList(zip.ImageEntry).empty;
+    var inputs = std.ArrayList(image_batch.Source).empty;
+    defer inputs.deinit(alloc);
+    var names = std.ArrayList([]u8).empty;
     defer {
-        for (output.items) |entry| {
-            alloc.free(entry.name);
-            alloc.free(entry.bytes);
-        }
-        output.deinit(alloc);
+        for (names.items) |name| alloc.free(name);
+        names.deinit(alloc);
     }
 
     for (files) |entry| {
         if (entry.kind != .image) continue;
 
-        const encoded = try image.encodeBytes(alloc, io, entry.source, config, 0, ai_models);
-        const name = outputName(alloc, entry.relative, config.suffix) catch |err| {
-            alloc.free(encoded);
-            return err;
-        };
-
-        output.append(alloc, .{ .name = name, .bytes = encoded }) catch |err| {
+        const name = try outputName(alloc, entry.relative, config.suffix);
+        names.append(alloc, name) catch |err| {
             alloc.free(name);
-            alloc.free(encoded);
             return err;
         };
-        if (progress) |reporter| reporter.advance();
+        inputs.append(alloc, .{ .file = entry.source }) catch |err| return err;
     }
 
-    if (output.items.len == 0) return error.EmptyArchive;
+    if (inputs.items.len == 0) return error.EmptyArchive;
 
-    const archive = try zip.createMemory(alloc, output.items);
+    const results = try image_batch.process(alloc, io, inputs.items, config, progress);
+    defer image_batch.freeResults(alloc, results);
+
+    const output = try alloc.alloc(zip.ImageEntry, results.len);
+    defer alloc.free(output);
+    for (output, results, names.items) |*entry, result, name| {
+        entry.* = .{ .name = name, .bytes = result.bytes };
+    }
+
+    const archive = try zip.createMemory(alloc, output);
     defer alloc.free(archive);
 
     try storage.writeAtomic(io, destination, archive);

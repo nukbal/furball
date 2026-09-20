@@ -2,6 +2,7 @@ const std = @import("std");
 
 const c = @import("pdfio");
 const image = @import("image.zig");
+const image_batch = @import("image_batch.zig");
 const protocol = @import("protocol.zig");
 const realesrgan = @import("realesrgan.zig");
 const storage = @import("storage.zig");
@@ -9,7 +10,7 @@ const storage = @import("storage.zig");
 const Allocator = std.mem.Allocator;
 
 const max_pdf_bytes: usize = 512 * 1024 * 1024;
-const max_stream_bytes: usize = 64 * 1024 * 1024;
+const max_stream_bytes: usize = max_pdf_bytes;
 
 pub const JpegImage = struct {
     allocator: std.mem.Allocator,
@@ -40,6 +41,23 @@ pub fn pageCount(alloc: Allocator, source: []const u8) !u32 {
     return std.math.cast(u32, count) orelse error.PdfTooManyPages;
 }
 
+pub fn imageCount(alloc: Allocator, source: []const u8) !u32 {
+    const source_z = try alloc.dupeZ(u8, source);
+    defer alloc.free(source_z);
+
+    const pdf = c.pdfioFileOpen(source_z.ptr, null, null, null, null) orelse return error.InvalidPdf;
+    defer _ = c.pdfioFileClose(pdf);
+
+    var count: usize = 0;
+    const page_count = c.pdfioFileGetNumPages(pdf);
+    for (0..page_count) |page_index| {
+        const images = try pageImages(alloc, pdf, page_index);
+        defer alloc.free(images);
+        count = std.math.add(usize, count, images.len) catch return error.PdfTooManyImages;
+    }
+    return std.math.cast(u32, count) orelse error.PdfTooManyImages;
+}
+
 pub fn thumbnailBytes(alloc: Allocator, source: []const u8) !?[]u8 {
     const source_z = try alloc.dupeZ(u8, source);
     defer alloc.free(source_z);
@@ -47,26 +65,30 @@ pub fn thumbnailBytes(alloc: Allocator, source: []const u8) !?[]u8 {
     const pdf = c.pdfioFileOpen(source_z.ptr, null, null, null, null) orelse return error.InvalidPdf;
     defer _ = c.pdfioFileClose(pdf);
 
-    const pdf_image = getFirstImage(pdf, null) orelse return null;
+    const images = try pageImages(alloc, pdf, 0);
+    defer alloc.free(images);
+    if (images.len == 0) return null;
 
+    return thumbnailImage(alloc, images[0]);
+}
+
+fn thumbnailImage(allocator: Allocator, pdf_image: ImageObject) !?[]u8 {
     switch (pdf_image.encoding) {
         .jpeg => {
-            const bytes = try readStream(alloc, pdf_image.object, false, c.pdfioObjGetLength(pdf_image.object)) orelse return null;
-            defer alloc.free(bytes);
-
-            return try image.thumbnailBytes(alloc, bytes);
+            const bytes = try readEncodedImage(allocator, pdf_image) orelse return null;
+            defer allocator.free(bytes);
+            return try image.thumbnailBytes(allocator, bytes);
         },
         .flate, .raw => {
-            var raw = try readFlateImage(alloc, pdf_image) orelse return null;
-            defer raw.deinit(alloc);
-
-            return try image.thumbnailBytesFromRgb(alloc, raw.width, raw.height, raw.pixels);
+            var raw = try readFlateImage(allocator, pdf_image) orelse return null;
+            defer raw.deinit(allocator);
+            return try image.thumbnailBytesFromRgb(allocator, raw.width, raw.height, raw.pixels);
         },
     }
 }
 
 fn readFlateImage(allocator: std.mem.Allocator, pdf_image: ImageObject) !?RawImage {
-    const bits_per_component = numberToU32(c.pdfioDictGetNumber(pdf_image.dict, "BitsPerComponent")) orelse return null;
+    const bits_per_component = numberToU32(dictNumber(pdf_image.dict, "BitsPerComponent") orelse return null) orelse return null;
     if (bits_per_component != 8) return null;
 
     const channels = pdfImageChannels(pdf_image.dict) orelse return null;
@@ -75,7 +97,7 @@ fn readFlateImage(allocator: std.mem.Allocator, pdf_image: ImageObject) !?RawIma
 
     if (sample_count == 0 or sample_count > max_stream_bytes) return null;
 
-    const decoded = try readStream(allocator, pdf_image.object, pdf_image.encoding == .flate, sample_count) orelse return null;
+    const decoded = try readStream(allocator, pdf_image.object, pdf_image.decode, sample_count) orelse return null;
 
     if (channels == 3) {
         return .{ .pixels = decoded, .width = pdf_image.width, .height = pdf_image.height };
@@ -91,11 +113,29 @@ fn readFlateImage(allocator: std.mem.Allocator, pdf_image: ImageObject) !?RawIma
         return error.PdfStreamTooLarge;
     };
 
-    for (decoded, 0..) |value, index| {
-        const offset = index * 3;
-        rgb[offset] = value;
-        rgb[offset + 1] = value;
-        rgb[offset + 2] = value;
+    if (channels == 1) {
+        for (decoded, 0..) |value, index| {
+            const offset = index * 3;
+            rgb[offset] = value;
+            rgb[offset + 1] = value;
+            rgb[offset + 2] = value;
+        }
+    } else if (channels == 4) {
+        for (0..pixel_count) |index| {
+            const source = index * 4;
+            const destination = index * 3;
+            const cyan = @as(u16, decoded[source]);
+            const magenta = @as(u16, decoded[source + 1]);
+            const yellow = @as(u16, decoded[source + 2]);
+            const black = @as(u16, decoded[source + 3]);
+            rgb[destination] = @intCast(255 - @min(@as(u16, 255), cyan + black));
+            rgb[destination + 1] = @intCast(255 - @min(@as(u16, 255), magenta + black));
+            rgb[destination + 2] = @intCast(255 - @min(@as(u16, 255), yellow + black));
+        }
+    } else {
+        allocator.free(decoded);
+        allocator.free(rgb);
+        return null;
     }
     allocator.free(decoded);
 
@@ -108,32 +148,101 @@ pub fn toPdf(
     sources: []const []const u8,
     destination: []const u8,
     config: protocol.Config,
-    ai_models: ?*realesrgan.Models,
     progress: ?protocol.Progress,
 ) !void {
     if (sources.len == 0) return error.EmptyPdf;
 
-    var pages = std.ArrayList(Page).empty;
-    defer {
-        for (pages.items) |page| alloc.free(page.bytes);
-        pages.deinit(alloc);
+    const inputs = try alloc.alloc(image_batch.Source, sources.len);
+    defer alloc.free(inputs);
+    for (inputs, sources) |*input, source| input.* = .{ .file = source };
+
+    const results = try image_batch.process(alloc, io, inputs, config, progress);
+    defer image_batch.freeResults(alloc, results);
+
+    const pages = try alloc.alloc(Page, results.len);
+    defer alloc.free(pages);
+    for (pages, results) |*page, result| {
+        page.* = .{ .bytes = result.bytes, .width = result.width, .height = result.height };
     }
 
-    for (sources) |source| {
-        const bytes = try image.encodeBytes(alloc, io, source, config, 0, ai_models);
-        const dimensions = image.inspectMemory(bytes) catch |err| {
-            alloc.free(bytes);
-            return err;
-        };
-        pages.append(alloc, .{ .bytes = bytes, .width = dimensions.width, .height = dimensions.height }) catch |err| {
-            alloc.free(bytes);
-            return err;
-        };
-        if (progress) |reporter| reporter.advance();
-    }
-    const output = try createPdf(alloc, pages.items);
+    const output = try createPdf(alloc, pages);
     defer alloc.free(output);
 
+    try storage.writeAtomic(io, destination, output);
+}
+
+pub fn toPdfFromFile(
+    alloc: Allocator,
+    io: std.Io,
+    source: []const u8,
+    destination: []const u8,
+    config: protocol.Config,
+    progress: ?protocol.Progress,
+) !void {
+    const source_z = try alloc.dupeZ(u8, source);
+    defer alloc.free(source_z);
+
+    const source_pdf = c.pdfioFileOpen(source_z.ptr, null, null, null, null) orelse return error.InvalidPdf;
+    var source_open = true;
+    defer {
+        if (source_open) _ = c.pdfioFileClose(source_pdf);
+    }
+
+    var extracted = std.ArrayList(ExtractedImage).empty;
+    defer {
+        for (extracted.items) |item| alloc.free(item.bytes);
+        extracted.deinit(alloc);
+    }
+    var inputs = std.ArrayList(image_batch.Source).empty;
+    defer inputs.deinit(alloc);
+
+    const page_count = c.pdfioFileGetNumPages(source_pdf);
+    for (0..page_count) |page_index| {
+        try io.checkCancel();
+        const images = try pageImages(alloc, source_pdf, page_index);
+        defer alloc.free(images);
+
+        for (images) |pdf_image| {
+            switch (pdf_image.encoding) {
+                .jpeg => {
+                    const bytes = try readEncodedImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
+                    const index = extracted.items.len;
+                    extracted.append(alloc, .{ .kind = .encoded, .bytes = bytes, .width = 0, .height = 0 }) catch |err| {
+                        alloc.free(bytes);
+                        return err;
+                    };
+                    inputs.append(alloc, extracted.items[index].source()) catch |err| return err;
+                },
+                .flate, .raw => {
+                    var raw = try readFlateImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
+                    const index = extracted.items.len;
+                    extracted.append(alloc, .{ .kind = .rgb, .bytes = raw.pixels, .width = raw.width, .height = raw.height }) catch |err| {
+                        raw.deinit(alloc);
+                        return err;
+                    };
+                    raw.pixels = &.{};
+                    inputs.append(alloc, extracted.items[index].source()) catch |err| return err;
+                },
+            }
+        }
+    }
+
+    if (inputs.items.len == 0) return error.EmptyPdf;
+
+    if (!c.pdfioFileClose(source_pdf)) return error.InvalidPdf;
+    source_open = false;
+
+    const results = try image_batch.process(alloc, io, inputs.items, config, progress);
+    defer image_batch.freeResults(alloc, results);
+
+    const pages = try alloc.alloc(Page, results.len);
+    defer alloc.free(pages);
+    for (pages, results) |*page, result| {
+        page.* = .{ .bytes = result.bytes, .width = result.width, .height = result.height };
+    }
+
+    const output = try createPdf(alloc, pages);
+    defer alloc.free(output);
     try storage.writeAtomic(io, destination, output);
 }
 
@@ -150,6 +259,8 @@ const ImageObject = struct {
     width: u32,
     height: u32,
     encoding: ImageEncoding,
+    decode: bool,
+    ascii85: bool,
 };
 
 const ImageEncoding = enum { jpeg, flate, raw };
@@ -165,54 +276,290 @@ const RawImage = struct {
     }
 };
 
-fn getFirstImage(pdf: *c.pdfio_file_t, filter: ?[]const u8) ?ImageObject {
-    const page_count = c.pdfioFileGetNumPages(pdf);
-    if (page_count == 0) return null;
+const ExtractedImage = struct {
+    kind: enum { encoded, rgb },
+    bytes: []u8,
+    width: u32,
+    height: u32,
 
-    for (0..page_count) |page_index| {
-        const page = c.pdfioFileGetPage(pdf, page_index) orelse continue;
-        const resources = pageDictValue(page, "Resources") orelse continue;
-        const xobjects = dictValue(resources, "XObject") orelse continue;
+    fn source(self: *const ExtractedImage) image_batch.Source {
+        return switch (self.kind) {
+            .encoded => .{ .encoded = self.bytes },
+            .rgb => .{ .rgb = .{ .width = self.width, .height = self.height, .pixels = self.bytes } },
+        };
+    }
+};
 
-        for (0..c.pdfioDictGetNumPairs(xobjects)) |pair| {
-            const key = c.pdfioDictGetKey(xobjects, pair) orelse continue;
-            const object = c.pdfioDictGetObj(xobjects, key) orelse continue;
-            const dict = c.pdfioObjGetDict(object) orelse continue;
-            const subtype_name = c.pdfioDictGetName(dict, "Subtype") orelse continue;
+const ResourceChain = struct {
+    items: [64]*c.pdfio_dict_t = undefined,
+    len: usize = 0,
 
-            if (!std.mem.eql(u8, std.mem.span(subtype_name), "Image")) continue;
-
-            if (c.pdfioDictGetName(dict, "Type")) |type_name| {
-                if (!std.mem.eql(u8, std.mem.span(type_name), "XObject")) continue;
-            }
-
-            const encoding = imageEncoding(dict) orelse continue;
-            if (filter) |name| if (!hasFilter(dict, name)) continue;
-
-            const width = numberToU32(c.pdfioDictGetNumber(dict, "Width")) orelse continue;
-            const height = numberToU32(c.pdfioDictGetNumber(dict, "Height")) orelse continue;
-
-            const length = c.pdfioObjGetLength(object);
-            if (length == 0 or length > max_stream_bytes) continue;
-
-            return .{ .object = object, .dict = dict, .width = width, .height = height, .encoding = encoding };
-        }
+    fn append(self: *ResourceChain, resources: *c.pdfio_dict_t) void {
+        if (self.len == self.items.len) return;
+        self.items[self.len] = resources;
+        self.len += 1;
     }
 
+    fn prepend(self: ResourceChain, resources: *c.pdfio_dict_t) ResourceChain {
+        if (self.len == self.items.len) return self;
+        var result = self;
+        var index = result.len;
+        while (index > 0) : (index -= 1) result.items[index] = result.items[index - 1];
+        result.items[0] = resources;
+        result.len += 1;
+        return result;
+    }
+};
+
+fn pageImages(allocator: Allocator, pdf: *c.pdfio_file_t, page_index: usize) ![]ImageObject {
+    var resources_images = std.ArrayList(ImageObject).empty;
+    errdefer resources_images.deinit(allocator);
+
+    const page = c.pdfioFileGetPage(pdf, page_index) orelse return resources_images.toOwnedSlice(allocator);
+    const own_resources = objectDictValue(page, "Resources");
+    const resources = pageDictValue(page, "Resources") orelse return resources_images.toOwnedSlice(allocator);
+    if (c.pdfioPageGetNumStreams(page) == 0) {
+        if (own_resources) |value| {
+            var forms = std.AutoHashMap(*c.pdfio_obj_t, void).init(allocator);
+            defer forms.deinit();
+            try collectXObjectImages(allocator, value, &resources_images, &forms);
+        }
+        return resources_images.toOwnedSlice(allocator);
+    }
+    var forms = std.AutoHashMap(*c.pdfio_obj_t, void).init(allocator);
+    defer forms.deinit();
+    try collectXObjectImages(allocator, own_resources orelse resources, &resources_images, &forms);
+
+    var content_images = std.ArrayList(ImageObject).empty;
+    errdefer content_images.deinit(allocator);
+    var content_forms = std.AutoHashMap(*c.pdfio_obj_t, void).init(allocator);
+    defer content_forms.deinit();
+    var chain = pageResourceChain(page);
+    if (chain.len == 0) chain.append(resources);
+    const has_content = try collectPageContentImages(allocator, page, chain, &content_images, &content_forms);
+    if (has_content) {
+        resources_images.deinit(allocator);
+        return content_images.toOwnedSlice(allocator);
+    }
+    content_images.deinit(allocator);
+
+    return resources_images.toOwnedSlice(allocator);
+}
+
+fn pageResourceChain(page: *c.pdfio_obj_t) ResourceChain {
+    var chain: ResourceChain = .{};
+    var current: ?*c.pdfio_obj_t = page;
+    while (current) |object| {
+        const dict = c.pdfioObjGetDict(object) orelse break;
+        if (dictValue(dict, "Resources")) |resources| chain.append(resources);
+        current = c.pdfioDictGetObj(dict, "Parent");
+    }
+    return chain;
+}
+
+fn collectPageContentImages(
+    allocator: Allocator,
+    page: *c.pdfio_obj_t,
+    resources: ResourceChain,
+    images: *std.ArrayList(ImageObject),
+    forms: *std.AutoHashMap(*c.pdfio_obj_t, void),
+) !bool {
+    var has_content = false;
+    for (0..c.pdfioPageGetNumStreams(page)) |stream_index| {
+        var uses = std.ArrayList(*c.pdfio_obj_t).empty;
+        defer uses.deinit(allocator);
+        {
+            const stream = c.pdfioPageOpenStream(page, stream_index, true) orelse continue;
+            has_content = true;
+            defer _ = c.pdfioStreamClose(stream);
+            try collectStreamUses(allocator, stream, resources, &uses);
+        }
+        for (uses.items) |object| try collectXObjectUse(allocator, object, resources, images, forms);
+    }
+    return has_content;
+}
+
+fn collectStreamImages(
+    allocator: Allocator,
+    stream: *c.pdfio_stream_t,
+    resources: ResourceChain,
+    images: *std.ArrayList(ImageObject),
+    forms: *std.AutoHashMap(*c.pdfio_obj_t, void),
+) anyerror!void {
+    var uses = std.ArrayList(*c.pdfio_obj_t).empty;
+    defer uses.deinit(allocator);
+    try collectStreamUses(allocator, stream, resources, &uses);
+    for (uses.items) |object| try collectXObjectUse(allocator, object, resources, images, forms);
+}
+
+fn collectStreamUses(
+    allocator: Allocator,
+    stream: *c.pdfio_stream_t,
+    resources: ResourceChain,
+    uses: *std.ArrayList(*c.pdfio_obj_t),
+) !void {
+    var token_buffer: [1024]u8 = undefined;
+    var pending_name: [256]u8 = undefined;
+    var pending_len: usize = 0;
+
+    while (c.pdfioStreamGetToken(stream, &token_buffer, token_buffer.len)) {
+        const token = std.mem.span(@as([*:0]const u8, @ptrCast(&token_buffer)));
+        if (token.len > 1 and token[0] == '/') {
+            const name = token[1..];
+            if (name.len <= pending_name.len) {
+                @memcpy(pending_name[0..name.len], name);
+                pending_len = name.len;
+            } else {
+                pending_len = 0;
+            }
+            continue;
+        }
+
+        if (std.mem.eql(u8, token, "Do") and pending_len != 0) {
+            const object = xObjectForName(resources, pending_name[0..pending_len]) orelse {
+                pending_len = 0;
+                continue;
+            };
+            try uses.append(allocator, object);
+        }
+        pending_len = 0;
+    }
+}
+
+fn xObjectForName(resources: ResourceChain, name: []const u8) ?*c.pdfio_obj_t {
+    var key: [256]u8 = undefined;
+    const key_z = std.fmt.bufPrintZ(&key, "{s}", .{name}) catch return null;
+    var index: usize = 0;
+    while (index < resources.len) : (index += 1) {
+        const xobjects = dictValue(resources.items[index], "XObject") orelse continue;
+        if (c.pdfioDictGetObj(xobjects, key_z)) |object| return object;
+    }
     return null;
 }
 
-fn imageEncoding(dict: *c.pdfio_dict_t) ?ImageEncoding {
-    return switch (c.pdfioDictGetType(dict, "Filter")) {
-        c.PDFIO_VALTYPE_NONE => .raw,
-        c.PDFIO_VALTYPE_NAME => imageEncodingName(c.pdfioDictGetName(dict, "Filter") orelse return null),
-        c.PDFIO_VALTYPE_ARRAY => blk: {
-            const filters = c.pdfioDictGetArray(dict, "Filter") orelse break :blk null;
-            if (c.pdfioArrayGetSize(filters) != 1) break :blk null;
-            break :blk imageEncodingName(c.pdfioArrayGetName(filters, 0) orelse break :blk null);
-        },
-        else => null,
+fn collectXObjectUse(
+    allocator: Allocator,
+    object: *c.pdfio_obj_t,
+    resources: ResourceChain,
+    images: *std.ArrayList(ImageObject),
+    forms: *std.AutoHashMap(*c.pdfio_obj_t, void),
+) anyerror!void {
+    if (imageObject(object)) |image_value| {
+        try images.append(allocator, image_value);
+        return;
+    }
+
+    const dict = c.pdfioObjGetDict(object) orelse return;
+    const subtype = dictName(dict, "Subtype") orelse return;
+    if (!std.mem.eql(u8, std.mem.span(subtype), "Form")) return;
+    if (forms.contains(object)) return;
+    try forms.put(object, {});
+
+    const form_resources = dictValue(dict, "Resources");
+    const form_chain = if (form_resources) |value| resources.prepend(value) else resources;
+    const form_stream = c.pdfioObjOpenStream(object, true) orelse return;
+    defer _ = c.pdfioStreamClose(form_stream);
+    try collectStreamImages(allocator, form_stream, form_chain, images, forms);
+}
+
+fn collectXObjectImages(
+    allocator: Allocator,
+    resources: *c.pdfio_dict_t,
+    images: *std.ArrayList(ImageObject),
+    forms: *std.AutoHashMap(*c.pdfio_obj_t, void),
+) !void {
+    const xobjects = dictValue(resources, "XObject") orelse return;
+
+    for (0..c.pdfioDictGetNumPairs(xobjects)) |pair| {
+        const key = c.pdfioDictGetKey(xobjects, pair) orelse continue;
+        const object = c.pdfioDictGetObj(xobjects, key) orelse continue;
+        if (imageObject(object)) |image_value| {
+            try images.append(allocator, image_value);
+            continue;
+        }
+
+        const dict = c.pdfioObjGetDict(object) orelse continue;
+        const subtype = dictName(dict, "Subtype") orelse continue;
+        if (!std.mem.eql(u8, std.mem.span(subtype), "Form")) continue;
+        if (forms.contains(object)) continue;
+        try forms.put(object, {});
+        const form_resources = dictValue(dict, "Resources") orelse resources;
+        try collectXObjectImages(allocator, form_resources, images, forms);
+    }
+}
+
+fn imageObject(object: *c.pdfio_obj_t) ?ImageObject {
+    const dict = c.pdfioObjGetDict(object) orelse return null;
+    const subtype_name = dictName(dict, "Subtype") orelse return null;
+    if (!std.mem.eql(u8, std.mem.span(subtype_name), "Image")) return null;
+
+    if (dictName(dict, "Type")) |type_name| {
+        if (!std.mem.eql(u8, std.mem.span(type_name), "XObject")) return null;
+    }
+
+    const encoding = imageEncoding(dict) orelse return null;
+    const width = numberToU32(dictNumber(dict, "Width") orelse return null) orelse return null;
+    const height = numberToU32(dictNumber(dict, "Height") orelse return null) orelse return null;
+    const length = c.pdfioObjGetLength(object);
+    if (length == 0 or length > max_stream_bytes) return null;
+
+    if (encoding != .jpeg) {
+        const bits_per_component = numberToU32(dictNumber(dict, "BitsPerComponent") orelse return null) orelse return null;
+        if (bits_per_component != 8) return null;
+        const channels = pdfImageChannels(dict) orelse return null;
+        const pixel_count = std.math.mul(usize, width, height) catch return null;
+        const sample_count = std.math.mul(usize, pixel_count, channels) catch return null;
+        if (sample_count == 0 or sample_count > max_stream_bytes) return null;
+    }
+
+    return .{
+        .object = object,
+        .dict = dict,
+        .width = width,
+        .height = height,
+        .encoding = encoding,
+        .decode = streamNeedsDecoding(dict),
+        .ascii85 = hasAscii85Filter(dict),
     };
+}
+
+fn streamNeedsDecoding(dict: *c.pdfio_dict_t) bool {
+    if (dictName(dict, "Filter")) |name| return std.mem.eql(u8, std.mem.span(name), "FlateDecode");
+    const filters = dictArray(dict, "Filter") orelse return false;
+    const count = c.pdfioArrayGetSize(filters);
+    if (count == 1) {
+        const name = arrayName(filters, 0) orelse return false;
+        return std.mem.eql(u8, std.mem.span(name), "FlateDecode");
+    }
+    if (count == 2) {
+        const first = arrayName(filters, 0) orelse return false;
+        if (!std.mem.eql(u8, std.mem.span(first), "ASCII85Decode")) return false;
+        const second = arrayName(filters, 1) orelse return false;
+        return std.mem.eql(u8, std.mem.span(second), "FlateDecode");
+    }
+    return false;
+}
+
+fn hasAscii85Filter(dict: *c.pdfio_dict_t) bool {
+    const filters = dictArray(dict, "Filter") orelse return false;
+    if (c.pdfioArrayGetSize(filters) != 2) return false;
+    const first = arrayName(filters, 0) orelse return false;
+    return std.mem.eql(u8, std.mem.span(first), "ASCII85Decode");
+}
+
+fn imageEncoding(dict: *c.pdfio_dict_t) ?ImageEncoding {
+    if (c.pdfioDictGetType(dict, "Filter") == c.PDFIO_VALTYPE_NONE) return .raw;
+    if (dictName(dict, "Filter")) |name| return imageEncodingName(name);
+
+    const filters = dictArray(dict, "Filter") orelse return null;
+    const filter_count = c.pdfioArrayGetSize(filters);
+    if (filter_count == 1) return imageEncodingName(arrayName(filters, 0) orelse return null);
+    if (filter_count == 2) {
+        const first = arrayName(filters, 0) orelse return null;
+        if (!std.mem.eql(u8, std.mem.span(first), "ASCII85Decode")) return null;
+        return imageEncodingName(arrayName(filters, 1) orelse return null);
+    }
+    return null;
 }
 
 fn imageEncodingName(name: [*:0]const u8) ?ImageEncoding {
@@ -226,6 +573,11 @@ fn pageDictValue(page: *c.pdfio_obj_t, key: [*:0]const u8) ?*c.pdfio_dict_t {
     if (c.pdfioPageGetDict(page, key)) |dict| return dict;
     const object = c.pdfioPageGetObj(page, key) orelse return null;
     return c.pdfioObjGetDict(object);
+}
+
+fn objectDictValue(object: *c.pdfio_obj_t, key: [*:0]const u8) ?*c.pdfio_dict_t {
+    const dict = c.pdfioObjGetDict(object) orelse return null;
+    return dictValue(dict, key);
 }
 
 fn dictValue(dict: *c.pdfio_dict_t, key: [*:0]const u8) ?*c.pdfio_dict_t {
@@ -254,27 +606,119 @@ fn readStream(allocator: std.mem.Allocator, object: *c.pdfio_obj_t, decode: bool
     return bytes;
 }
 
+fn readEncodedImage(allocator: Allocator, pdf_image: ImageObject) !?[]u8 {
+    const length = c.pdfioObjGetLength(pdf_image.object);
+    const encoded = try readStream(allocator, pdf_image.object, pdf_image.decode, length) orelse return null;
+    if (!pdf_image.ascii85 or pdf_image.decode) return encoded;
+
+    defer allocator.free(encoded);
+    return @as(?[]u8, try decodeAscii85(allocator, encoded));
+}
+
+fn decodeAscii85(allocator: Allocator, encoded: []const u8) ![]u8 {
+    var decoded = std.ArrayList(u8).empty;
+    errdefer decoded.deinit(allocator);
+
+    var digits: [5]u32 = undefined;
+    var digit_count: usize = 0;
+    var index: usize = 0;
+    while (index < encoded.len) : (index += 1) {
+        const value = encoded[index];
+        if (std.ascii.isWhitespace(value)) continue;
+        if (value == '<' and index + 1 < encoded.len and encoded[index + 1] == '~') {
+            index += 1;
+            continue;
+        }
+        if (value == '~') {
+            if (index + 1 >= encoded.len or encoded[index + 1] != '>') return error.PdfImageReadFailed;
+            index += 1;
+            break;
+        }
+        if (value == 'z') {
+            if (digit_count != 0) return error.PdfImageReadFailed;
+            try appendAscii85Bytes(allocator, &decoded, 0, 4);
+            continue;
+        }
+        if (value < '!' or value > 'u') return error.PdfImageReadFailed;
+
+        digits[digit_count] = value - '!';
+        digit_count += 1;
+        if (digit_count == 5) {
+            const number = try ascii85Number(digits[0..]);
+            try appendAscii85Bytes(allocator, &decoded, number, 4);
+            digit_count = 0;
+        }
+    }
+
+    if (digit_count == 1) return error.PdfImageReadFailed;
+    if (digit_count > 1) {
+        for (digits[digit_count..5]) |*digit| digit.* = 84;
+        const number = try ascii85Number(digits[0..]);
+        try appendAscii85Bytes(allocator, &decoded, number, digit_count - 1);
+    }
+
+    return decoded.toOwnedSlice(allocator);
+}
+
+fn ascii85Number(digits: []const u32) !u32 {
+    var number: u64 = 0;
+    for (digits) |digit| number = number * 85 + digit;
+    if (number > std.math.maxInt(u32)) return error.PdfImageReadFailed;
+    return @intCast(number);
+}
+
+fn appendAscii85Bytes(
+    allocator: Allocator,
+    decoded: *std.ArrayList(u8),
+    number: u32,
+    count: usize,
+) !void {
+    if (decoded.items.len > max_stream_bytes - count) return error.PdfStreamTooLarge;
+    var bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &bytes, number, .big);
+    try decoded.appendSlice(allocator, bytes[0..count]);
+}
+
 fn pdfImageChannels(dict: *c.pdfio_dict_t) ?usize {
-    const colorspace = c.pdfioDictGetName(dict, "ColorSpace") orelse return null;
-    if (std.mem.eql(u8, std.mem.span(colorspace), "DeviceRGB")) return 3;
-    if (std.mem.eql(u8, std.mem.span(colorspace), "DeviceGray")) return 1;
+    if (dictName(dict, "ColorSpace")) |colorspace| {
+        if (std.mem.eql(u8, std.mem.span(colorspace), "DeviceRGB")) return 3;
+        if (std.mem.eql(u8, std.mem.span(colorspace), "DeviceGray")) return 1;
+        if (std.mem.eql(u8, std.mem.span(colorspace), "DeviceCMYK")) return 4;
+        return null;
+    }
+
+    const colorspace_array = dictArray(dict, "ColorSpace") orelse return null;
+    const base = arrayName(colorspace_array, 0) orelse return null;
+    if (!std.mem.eql(u8, std.mem.span(base), "ICCBased")) return null;
+    const profile = c.pdfioArrayGetObj(colorspace_array, 1) orelse return null;
+    const profile_dict = c.pdfioObjGetDict(profile) orelse return null;
+    const channels = numberToU32(dictNumber(profile_dict, "N") orelse return null) orelse return null;
+    if (channels == 1 or channels == 3 or channels == 4) return channels;
     return null;
 }
 
-fn hasFilter(dict: *c.pdfio_dict_t, expected: []const u8) bool {
-    return switch (c.pdfioDictGetType(dict, "Filter")) {
-        c.PDFIO_VALTYPE_NAME => blk: {
-            const filter_name = c.pdfioDictGetName(dict, "Filter") orelse break :blk false;
-            break :blk std.mem.eql(u8, std.mem.span(filter_name), expected);
-        },
-        c.PDFIO_VALTYPE_ARRAY => blk: {
-            const filters = c.pdfioDictGetArray(dict, "Filter") orelse break :blk false;
-            if (c.pdfioArrayGetSize(filters) != 1) break :blk false;
-            const filter_name = c.pdfioArrayGetName(filters, 0) orelse break :blk false;
-            break :blk std.mem.eql(u8, std.mem.span(filter_name), expected);
-        },
-        else => false,
-    };
+fn dictName(dict: *c.pdfio_dict_t, key: [*:0]const u8) ?[*:0]const u8 {
+    if (c.pdfioDictGetName(dict, key)) |name| return name;
+    const object = c.pdfioDictGetObj(dict, key) orelse return null;
+    return c.pdfioObjGetName(object);
+}
+
+fn dictNumber(dict: *c.pdfio_dict_t, key: [*:0]const u8) ?f64 {
+    const number = c.pdfioDictGetNumber(dict, key);
+    if (number != 0) return number;
+    return null;
+}
+
+fn dictArray(dict: *c.pdfio_dict_t, key: [*:0]const u8) ?*c.pdfio_array_t {
+    if (c.pdfioDictGetArray(dict, key)) |array| return array;
+    const object = c.pdfioDictGetObj(dict, key) orelse return null;
+    return c.pdfioObjGetArray(object);
+}
+
+fn arrayName(array: *c.pdfio_array_t, index: usize) ?[*:0]const u8 {
+    if (c.pdfioArrayGetName(array, index)) |name| return name;
+    const object = c.pdfioArrayGetObj(array, index) orelse return null;
+    return c.pdfioObjGetName(object);
 }
 
 fn numberToU32(value: f64) ?u32 {

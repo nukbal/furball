@@ -48,6 +48,7 @@ fn fixtureFlatePdf(allocator: std.mem.Allocator) ![]u8 {
 
 fn fixtureMixedPdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
     const flate = [_]u8{ 0x78, 0x9c, 0xfb, 0xcf, 0xc0, 0xf0, 0x9f, 0x81, 0x01, 0x00, 0x08, 0xfd, 0x01, 0xff };
+    const content = "q\n/A Do\nQ\n";
     var output = std.ArrayList(u8).empty;
     errdefer output.deinit(allocator);
     var offsets: [8]usize = undefined;
@@ -65,7 +66,7 @@ fn fixtureMixedPdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
     try output.appendSlice(allocator, &flate);
     try output.appendSlice(allocator, "\nendstream\nendobj\n");
     offsets[6] = output.items.len;
-    try output.print(allocator, "6 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n", .{});
+    try output.print(allocator, "6 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ content.len, content });
     offsets[7] = output.items.len;
     try output.print(allocator, "7 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length {d} >>\nstream\n", .{jpeg.len});
     try output.appendSlice(allocator, jpeg);
@@ -103,6 +104,207 @@ fn fixtureCrossPagePdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
     try output.appendSlice(allocator, "xref\n0 8\n0000000000 65535 f \n");
     for (offsets[1..]) |offset| try output.print(allocator, "{d:0>10} 00000 n \n", .{offset});
     try output.print(allocator, "trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n{d}\n%%EOF\n", .{xref_offset});
+    return output.toOwnedSlice(allocator);
+}
+
+fn fixtureBlankInteriorPdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
+    const image_content = "q\n/Im0 Do\nQ\n";
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+    var offsets: [14]usize = undefined;
+    try output.appendSlice(allocator, "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    offsets[1] = output.items.len;
+    try output.appendSlice(allocator, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    offsets[2] = output.items.len;
+    try output.appendSlice(allocator, "2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 >>\nendobj\n");
+    offsets[3] = output.items.len;
+    try output.appendSlice(allocator, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 11 0 R /MediaBox [0 0 1 1] /Contents 4 0 R >>\nendobj\n");
+    offsets[4] = output.items.len;
+    try output.print(allocator, "4 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ image_content.len, image_content });
+    offsets[5] = output.items.len;
+    try output.appendSlice(allocator, "5 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 1 1] /Contents 6 0 R >>\nendobj\n");
+    offsets[6] = output.items.len;
+    try output.appendSlice(allocator, "6 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n");
+    offsets[7] = output.items.len;
+    try output.appendSlice(allocator, "7 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 1 1] /Contents 8 0 R >>\nendobj\n");
+    offsets[8] = output.items.len;
+    try output.appendSlice(allocator, "8 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n");
+    offsets[9] = output.items.len;
+    try output.appendSlice(allocator, "9 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 12 0 R /MediaBox [0 0 1 1] /Contents 10 0 R >>\nendobj\n");
+    offsets[10] = output.items.len;
+    try output.print(allocator, "10 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ image_content.len, image_content });
+    offsets[11] = output.items.len;
+    try output.appendSlice(allocator, "11 0 obj\n<< /XObject << /Im0 13 0 R >> >>\nendobj\n");
+    offsets[12] = output.items.len;
+    try output.appendSlice(allocator, "12 0 obj\n<< /XObject << /Im0 13 0 R >> >>\nendobj\n");
+    offsets[13] = output.items.len;
+    try output.print(allocator, "13 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length {d} >>\nstream\n", .{jpeg.len});
+    try output.appendSlice(allocator, jpeg);
+    try output.appendSlice(allocator, "\nendstream\nendobj\n");
+    const xref_offset = output.items.len;
+    try output.appendSlice(allocator, "xref\n0 14\n0000000000 65535 f \n");
+    for (offsets[1..]) |offset| try output.print(allocator, "{d:0>10} 00000 n \n", .{offset});
+    try output.print(allocator, "trailer\n<< /Size 14 /Root 1 0 R >>\nstartxref\n{d}\n%%EOF\n", .{xref_offset});
+    return output.toOwnedSlice(allocator);
+}
+
+fn fixtureFormBoundaryPdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
+    const form_content = "q\n/Im0 Do\nQ\n";
+    const page_content = "q\n/Fm0 Do\nQ\n";
+    const blank_content = "q\nQ\n";
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+    var offsets: [16]usize = undefined;
+    try output.appendSlice(allocator, "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    offsets[1] = output.items.len;
+    try output.appendSlice(allocator, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    offsets[2] = output.items.len;
+    try output.appendSlice(allocator, "2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 /Resources 11 0 R >>\nendobj\n");
+    offsets[3] = output.items.len;
+    try output.appendSlice(allocator, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] /Contents 4 0 R >>\nendobj\n");
+    offsets[4] = output.items.len;
+    try output.print(allocator, "4 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ page_content.len, page_content });
+    offsets[5] = output.items.len;
+    try output.appendSlice(allocator, "5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[6] = output.items.len;
+    try output.print(allocator, "6 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ blank_content.len, blank_content });
+    offsets[7] = output.items.len;
+    try output.appendSlice(allocator, "7 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[8] = output.items.len;
+    try output.print(allocator, "8 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ blank_content.len, blank_content });
+    offsets[9] = output.items.len;
+    try output.appendSlice(allocator, "9 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] /Contents 10 0 R >>\nendobj\n");
+    offsets[10] = output.items.len;
+    try output.print(allocator, "10 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ page_content.len, page_content });
+    offsets[11] = output.items.len;
+    try output.appendSlice(allocator, "11 0 obj\n<< /XObject << /Fm0 13 0 R >> >>\nendobj\n");
+    offsets[12] = output.items.len;
+    try output.appendSlice(allocator, "12 0 obj\n<< /Unused true >>\nendobj\n");
+    offsets[13] = output.items.len;
+    try output.print(allocator, "13 0 obj\n<< /Type /XObject /Subtype /Form /FormType 1 /BBox [0 0 1 1] /Resources 14 0 R /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ form_content.len, form_content });
+    offsets[14] = output.items.len;
+    try output.appendSlice(allocator, "14 0 obj\n<< /XObject << /Im0 15 0 R >> >>\nendobj\n");
+    offsets[15] = output.items.len;
+    try output.print(allocator, "15 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length {d} >>\nstream\n", .{jpeg.len});
+    try output.appendSlice(allocator, jpeg);
+    try output.appendSlice(allocator, "\nendstream\nendobj\n");
+    const xref_offset = output.items.len;
+    try output.appendSlice(allocator, "xref\n0 16\n0000000000 65535 f \n");
+    for (offsets[1..]) |offset| try output.print(allocator, "{d:0>10} 00000 n \n", .{offset});
+    try output.print(allocator, "trailer\n<< /Size 16 /Root 1 0 R >>\nstartxref\n{d}\n%%EOF\n", .{xref_offset});
+    return output.toOwnedSlice(allocator);
+}
+
+fn fixtureDirectResourceBoundaryPdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+    var offsets: [14]usize = undefined;
+    try output.appendSlice(allocator, "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    offsets[1] = output.items.len;
+    try output.appendSlice(allocator, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    offsets[2] = output.items.len;
+    try output.appendSlice(allocator, "2 0 obj\n<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 /Resources 11 0 R >>\nendobj\n");
+    offsets[3] = output.items.len;
+    try output.appendSlice(allocator, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 12 0 R /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[4] = output.items.len;
+    try output.appendSlice(allocator, "4 0 obj\n<< /Unused true >>\nendobj\n");
+    offsets[5] = output.items.len;
+    try output.appendSlice(allocator, "5 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[6] = output.items.len;
+    try output.appendSlice(allocator, "6 0 obj\n<< /Unused true >>\nendobj\n");
+    offsets[7] = output.items.len;
+    try output.appendSlice(allocator, "7 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[8] = output.items.len;
+    try output.appendSlice(allocator, "8 0 obj\n<< /Unused true >>\nendobj\n");
+    offsets[9] = output.items.len;
+    try output.appendSlice(allocator, "9 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 13 0 R /MediaBox [0 0 1 1] >>\nendobj\n");
+    offsets[10] = output.items.len;
+    try output.appendSlice(allocator, "10 0 obj\n<< /Unused true >>\nendobj\n");
+    offsets[11] = output.items.len;
+    try output.appendSlice(allocator, "11 0 obj\n<< /XObject << /Im0 14 0 R >> >>\nendobj\n");
+    offsets[12] = output.items.len;
+    try output.appendSlice(allocator, "12 0 obj\n<< /XObject << /Im0 14 0 R >> >>\nendobj\n");
+    offsets[13] = output.items.len;
+    try output.appendSlice(allocator, "13 0 obj\n<< /XObject << /Im0 14 0 R >> >>\nendobj\n");
+    const image_offset = output.items.len;
+    try output.print(allocator, "14 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length {d} >>\nstream\n", .{jpeg.len});
+    try output.appendSlice(allocator, jpeg);
+    try output.appendSlice(allocator, "\nendstream\nendobj\n");
+    const xref_offset = output.items.len;
+    try output.appendSlice(allocator, "xref\n0 15\n0000000000 65535 f \n");
+    for (offsets[1..]) |offset| try output.print(allocator, "{d:0>10} 00000 n \n", .{offset});
+    try output.print(allocator, "{d:0>10} 00000 n \ntrailer\n<< /Size 15 /Root 1 0 R >>\nstartxref\n{d}\n%%EOF\n", .{ image_offset, xref_offset });
+    return output.toOwnedSlice(allocator);
+}
+
+fn ascii85Encode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    var encoded = std.ArrayList(u8).empty;
+    errdefer encoded.deinit(allocator);
+    try encoded.appendSlice(allocator, "<~");
+
+    var index: usize = 0;
+    while (index + 4 <= bytes.len) : (index += 4) {
+        var number: u32 = 0;
+        for (bytes[index .. index + 4]) |value| number = (number << 8) | value;
+        try appendAscii85Tuple(allocator, &encoded, number, 5);
+    }
+
+    const remaining = bytes.len - index;
+    if (remaining != 0) {
+        var number: u32 = 0;
+        for (bytes[index..]) |value| number = (number << 8) | value;
+        number <<= @intCast((4 - remaining) * 8);
+        try appendAscii85Tuple(allocator, &encoded, number, remaining + 1);
+    }
+
+    try encoded.appendSlice(allocator, "~>");
+    return encoded.toOwnedSlice(allocator);
+}
+
+fn appendAscii85Tuple(allocator: std.mem.Allocator, encoded: *std.ArrayList(u8), number: u32, count: usize) !void {
+    if (number == 0 and count == 5) {
+        try encoded.append(allocator, 'z');
+        return;
+    }
+
+    var digits: [5]u8 = undefined;
+    var value: u32 = number;
+    var index: usize = digits.len;
+    while (index > 0) {
+        index -= 1;
+        digits[index] = @intCast(value % 85 + '!');
+        value /= 85;
+    }
+    try encoded.appendSlice(allocator, digits[0..count]);
+}
+
+fn fixtureAscii85Pdf(allocator: std.mem.Allocator, jpeg: []const u8) ![]u8 {
+    const encoded = try ascii85Encode(allocator, jpeg);
+    defer allocator.free(encoded);
+    const content = "q\n/Im0 Do\nQ\n";
+
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+    var offsets: [7]usize = undefined;
+    try output.appendSlice(allocator, "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    offsets[1] = output.items.len;
+    try output.appendSlice(allocator, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    offsets[2] = output.items.len;
+    try output.appendSlice(allocator, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    offsets[3] = output.items.len;
+    try output.appendSlice(allocator, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources 4 0 R /MediaBox [0 0 1 1] /Contents 6 0 R >>\nendobj\n");
+    offsets[4] = output.items.len;
+    try output.appendSlice(allocator, "4 0 obj\n<< /XObject << /Im0 5 0 R >> >>\nendobj\n");
+    offsets[5] = output.items.len;
+    try output.print(allocator, "5 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter [/ASCII85Decode /DCTDecode] /Length {d} >>\nstream\n", .{encoded.len});
+    try output.appendSlice(allocator, encoded);
+    try output.appendSlice(allocator, "\nendstream\nendobj\n");
+    offsets[6] = output.items.len;
+    try output.print(allocator, "6 0 obj\n<< /Length {d} >>\nstream\n{s}endstream\nendobj\n", .{ content.len, content });
+    const xref_offset = output.items.len;
+    try output.appendSlice(allocator, "xref\n0 7\n0000000000 65535 f \n");
+    for (offsets[1..]) |offset| try output.print(allocator, "{d:0>10} 00000 n \n", .{offset});
+    try output.print(allocator, "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{d}\n%%EOF\n", .{xref_offset});
     return output.toOwnedSlice(allocator);
 }
 
@@ -155,12 +357,11 @@ test "AI upscale reports unavailable without a backend" {
 test "raw AI input below model minimum is rejected" {
     const allocator = std.testing.allocator;
     var raw_input: [4 * 4 * 3]u8 = undefined;
-    var models = realesrgan.Models.init();
     var raw_width: u32 = 0;
     var raw_height: u32 = 0;
     try std.testing.expectError(
         error.InvalidResize,
-        models.upscale(allocator, std.testing.io, &raw_input, 4, 4, 8, &raw_width, &raw_height),
+        realesrgan.upscale(allocator, std.testing.io, &raw_input, 4, 4, 8, &raw_width, &raw_height),
     );
 }
 
@@ -169,10 +370,9 @@ test "AI image conversion repeats safe 32x32 inference" {
     var raw_input: [32 * 32 * 3]u8 = undefined;
     for (&raw_input, 0..) |*pixel, index| pixel.* = @intCast((index * 5) % 256);
 
-    var models = realesrgan.Models.init();
     var raw_width: u32 = 0;
     var raw_height: u32 = 0;
-    const first = try models.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    const first = try realesrgan.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
     defer allocator.free(first);
     try std.testing.expectEqual(@as(u32, 64), raw_width);
     try std.testing.expectEqual(@as(u32, 64), raw_height);
@@ -180,7 +380,7 @@ test "AI image conversion repeats safe 32x32 inference" {
 
     raw_width = 0;
     raw_height = 0;
-    const second = try models.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    const second = try realesrgan.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
     defer allocator.free(second);
     try std.testing.expectEqual(@as(u32, 64), raw_width);
     try std.testing.expectEqual(@as(u32, 64), raw_height);
@@ -191,8 +391,7 @@ test "tiny AI image conversion uses normal resize below model minimum" {
     const allocator = std.testing.allocator;
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    var models = realesrgan.Models.init();
-    const jpeg = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 2, .quality = 88, .ai = true }, &models);
+    const jpeg = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 2, .quality = 88, .ai = true });
     defer allocator.free(jpeg);
     try std.testing.expectEqualSlices(u8, "\xff\xd8", jpeg[0..2]);
     try std.testing.expectEqual(image.ImageInfo{ .width = 2, .height = 2 }, try image.inspectMemory(jpeg));
@@ -288,7 +487,6 @@ test "zip input converts naturally sorted images to a PDF" {
     defer allocator.free(output_directory);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "images.zip", .data = archive_bytes });
 
-    var models = realesrgan.Models.init();
     var progress: ProgressCounter = .{};
     var outputs = try operations.process(allocator, std.testing.io, .{
         .mode = .path,
@@ -296,7 +494,7 @@ test "zip input converts naturally sorted images to a PDF" {
         .width = 1,
         .quality = 80,
         .dir_mode = .pdf,
-    }, archive_path, &models, progress.reporter());
+    }, archive_path, progress.reporter());
     defer outputs.deinit();
     try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
     try std.testing.expectEqual(@as(usize, 2), progress.value);
@@ -340,6 +538,203 @@ test "pdf writer creates pages" {
     try std.testing.expect(inspected.thumbnail_blob != null);
 }
 
+test "pdf input converts XObject images into a new PDF in page order" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+
+    const pages = [_]pdf.Page{
+        .{ .bytes = jpeg, .width = 1, .height = 1 },
+        .{ .bytes = jpeg, .width = 1, .height = 1 },
+    };
+    try pdf.createFromJpegs(allocator, std.testing.io, &pages, source_path);
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), progress.value);
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+    try std.testing.expectEqual(@as(u32, 2), try pdf.imageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf input converts Flate image XObjects" {
+    const allocator = std.testing.allocator;
+    const bytes = try fixtureFlatePdf(allocator);
+    defer allocator.free(bytes);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.pdf", .data = bytes });
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 1), progress.value);
+    try std.testing.expectEqual(@as(u32, 1), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf input converts ASCII85 wrapped JPEG image XObjects" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+    const bytes = try fixtureAscii85Pdf(allocator, jpeg);
+    defer allocator.free(bytes);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.pdf", .data = bytes });
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 1), progress.value);
+    try std.testing.expectEqual(@as(u32, 1), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf input keeps images before and after blank interior pages" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+    const bytes = try fixtureBlankInteriorPdf(allocator, jpeg);
+    defer allocator.free(bytes);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.pdf", .data = bytes });
+
+    var inspected = try operations.inspect(allocator, std.testing.io, source_path);
+    defer operations.freeResponse(allocator, &inspected);
+    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expect(inspected.thumbnail_blob != null);
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), progress.value);
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf input keeps boundary images inside form XObjects" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+    const bytes = try fixtureFormBoundaryPdf(allocator, jpeg);
+    defer allocator.free(bytes);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.pdf", .data = bytes });
+
+    var inspected = try operations.inspect(allocator, std.testing.io, source_path);
+    defer operations.freeResponse(allocator, &inspected);
+    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expect(inspected.thumbnail_blob != null);
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), progress.value);
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf input keeps direct resource images without page streams" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+    const bytes = try fixtureDirectResourceBoundaryPdf(allocator, jpeg);
+    defer allocator.free(bytes);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/output", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "output");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source.pdf", .data = bytes });
+
+    var inspected = try operations.inspect(allocator, std.testing.io, source_path);
+    defer operations.freeResponse(allocator, &inspected);
+    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expect(inspected.thumbnail_blob != null);
+
+    var progress: ProgressCounter = .{};
+    var outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, progress.reporter());
+    defer outputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), progress.value);
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
 test "pdf thumbnail reads a Flate encoded RGB image XObject" {
     const allocator = std.testing.allocator;
     const bytes = try fixtureFlatePdf(allocator);
@@ -379,7 +774,7 @@ test "pdf thumbnail uses the first supported image" {
     try std.testing.expectEqualSlices(u8, expected, thumbnail);
 }
 
-test "pdf thumbnail scans later pages when the first page has no image" {
+test "pdf thumbnail only uses the first page image XObject" {
     const allocator = std.testing.allocator;
     const jpeg = try fixtureJpeg(allocator);
     defer allocator.free(jpeg);
@@ -394,8 +789,8 @@ test "pdf thumbnail scans later pages when the first page has no image" {
     var inspected = try operations.inspect(allocator, std.testing.io, path);
     defer operations.freeResponse(allocator, &inspected);
     try std.testing.expectEqual(protocol.Kind.pdf, inspected.kind);
-    try std.testing.expectEqual(@as(u32, 2), inspected.count);
-    try std.testing.expect(inspected.thumbnail_blob != null);
+    try std.testing.expectEqual(@as(u32, 1), inspected.count);
+    try std.testing.expect(inspected.thumbnail_blob == null);
 }
 
 test "pdf inspection succeeds without a supported image preview" {
@@ -410,7 +805,7 @@ test "pdf inspection succeeds without a supported image preview" {
     var inspected = try operations.inspect(allocator, std.testing.io, path);
     defer operations.freeResponse(allocator, &inspected);
     try std.testing.expectEqual(protocol.Kind.pdf, inspected.kind);
-    try std.testing.expectEqual(@as(u32, 1), inspected.count);
+    try std.testing.expectEqual(@as(u32, 0), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob == null);
 }
 
@@ -461,9 +856,12 @@ test "folder with 16 or more images completes inspection and processing" {
     defer allocator.free(output_directory);
     const direct_output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/direct", .{tmp.sub_path});
     defer allocator.free(direct_output_directory);
+    const pdf_output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/pdf", .{tmp.sub_path});
+    defer allocator.free(pdf_output_directory);
     const zip_output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/zip", .{tmp.sub_path});
     defer allocator.free(zip_output_directory);
     try tmp.dir.createDirPath(std.testing.io, "direct");
+    try tmp.dir.createDirPath(std.testing.io, "pdf");
     try tmp.dir.createDirPath(std.testing.io, "zip");
 
     var inspected = try operations.inspect(allocator, std.testing.io, path);
@@ -471,7 +869,6 @@ test "folder with 16 or more images completes inspection and processing" {
     try std.testing.expectEqual(protocol.Kind.directory, inspected.kind);
     try std.testing.expectEqual(@as(u32, @intCast(image_count)), inspected.count);
     try std.testing.expectEqual(image_count, inspected.children.len);
-    var direct_models = realesrgan.Models.init();
     var direct_progress: ProgressCounter = .{};
     var direct_outputs = try operations.process(allocator, std.testing.io, .{
         .mode = .path,
@@ -479,11 +876,22 @@ test "folder with 16 or more images completes inspection and processing" {
         .width = 1,
         .quality = 80,
         .dir_mode = .none,
-    }, path, &direct_models, direct_progress.reporter());
+    }, path, direct_progress.reporter());
     defer direct_outputs.deinit();
     try std.testing.expectEqual(image_count, direct_outputs.values.items.len);
     try std.testing.expectEqual(image_count, direct_progress.value);
-    var zip_models = realesrgan.Models.init();
+    var pdf_progress: ProgressCounter = .{};
+    var pdf_outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = pdf_output_directory,
+        .width = 1,
+        .quality = 80,
+        .dir_mode = .pdf,
+    }, path, pdf_progress.reporter());
+    defer pdf_outputs.deinit();
+    try std.testing.expectEqual(@as(usize, 1), pdf_outputs.values.items.len);
+    try std.testing.expectEqual(image_count, pdf_progress.value);
+    try std.testing.expectEqual(@as(u32, @intCast(image_count)), try pdf.pageCount(allocator, pdf_outputs.values.items[0]));
     var zip_progress: ProgressCounter = .{};
     var zip_outputs = try operations.process(allocator, std.testing.io, .{
         .mode = .path,
@@ -491,7 +899,7 @@ test "folder with 16 or more images completes inspection and processing" {
         .width = 1,
         .quality = 80,
         .dir_mode = .zip,
-    }, path, &zip_models, zip_progress.reporter());
+    }, path, zip_progress.reporter());
     defer zip_outputs.deinit();
     try std.testing.expectEqual(@as(usize, 1), zip_outputs.values.items.len);
     try std.testing.expectEqual(image_count, zip_progress.value);

@@ -48,18 +48,52 @@ pub fn encode(
     try storage.writeAtomic(io, destination, output);
 }
 
-pub fn encodeBytes(alloc: Allocator, io: std.Io, source: []const u8, config: protocol.Config, nonce: u64, ai_models: ?*realesrgan.Models) ![]u8 {
+pub fn encodeBytes(alloc: Allocator, io: std.Io, source: []const u8, config: protocol.Config, nonce: u64) ![]u8 {
     _ = nonce;
     try io.checkCancel();
     const input = try readBytes(alloc, io, source);
     defer alloc.free(input);
 
-    return encodeBytesFromMemory(alloc, io, input, config, ai_models);
+    return encodeBytesFromMemory(alloc, io, input, config);
 }
 
-pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, config: protocol.Config, ai_models: ?*realesrgan.Models) ![]u8 {
+pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, config: protocol.Config) ![]u8 {
     var source = try decode(alloc, input);
     defer source.deinit(alloc);
+    try io.checkCancel();
+
+    return encodeDecoded(alloc, io, &source, config);
+}
+
+pub fn encodeRgb(
+    alloc: Allocator,
+    io: std.Io,
+    width: u32,
+    height: u32,
+    pixels: []const u8,
+    config: protocol.Config,
+) ![]u8 {
+    const checked_width = std.math.cast(c_int, width) orelse return error.ImageDimensionsTooLarge;
+    const checked_height = std.math.cast(c_int, height) orelse return error.ImageDimensionsTooLarge;
+    const info = try checkedInfo(checked_width, checked_height);
+    const byte_count = try byteCount(info);
+    if (pixels.len < byte_count) return error.ImageDecodeFailed;
+
+    const owned = try alloc.alloc(u8, byte_count);
+    @memcpy(owned, pixels[0..byte_count]);
+    var source = DecodedImage{ .pixels = owned, .width = info.width, .height = info.height };
+    defer source.deinit(alloc);
+    try io.checkCancel();
+
+    return encodeDecoded(alloc, io, &source, config);
+}
+
+fn encodeDecoded(
+    alloc: Allocator,
+    io: std.Io,
+    source: *DecodedImage,
+    config: protocol.Config,
+) ![]u8 {
     try io.checkCancel();
 
     const requested = config.width;
@@ -70,7 +104,6 @@ pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, co
                 try source.resizeShortEdgeExact(alloc, requested);
                 return source.encodeJpeg(alloc, config.quality, null);
             }
-            const models = ai_models orelse return error.AiUnavailable;
 
             const ai_target = if (short_edge < realesrgan.min_model_input_dimension) blk: {
                 try source.resizeShortEdgeExact(alloc, realesrgan.min_model_input_dimension);
@@ -92,7 +125,7 @@ pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, co
 
             var enhanced_width: u32 = 0;
             var enhanced_height: u32 = 0;
-            const enhanced_pixels = try models.upscale(
+            const enhanced_pixels = try realesrgan.upscale(
                 alloc,
                 io,
                 source.pixels,

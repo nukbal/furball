@@ -7,6 +7,15 @@ pub const Kind = enum { image, video, pdf, zip, directory, archive_file };
 pub const max_thumbnail_blob_bytes: usize = 192 * 1024;
 pub const max_thumbnail_blob_base64_bytes: usize = 256 * 1024;
 
+pub const Progress = struct {
+    context: *anyopaque,
+    advance_fn: *const fn (*anyopaque) void,
+
+    pub fn advance(progress: Progress) void {
+        progress.advance_fn(progress.context);
+    }
+};
+
 pub const Config = struct {
     mode: Mode = .path,
     path: []const u8 = "",

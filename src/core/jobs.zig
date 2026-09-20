@@ -54,6 +54,7 @@ const Batch = struct {
     generation: u64 = 0,
     submitted: usize = 0,
     completed: usize = 0,
+    progress_completed: usize = 0,
     active: bool = false,
     wake_armed: bool = false,
     handle: native_sdk.ChannelHandle = .{},
@@ -169,6 +170,12 @@ pub const JobPool = struct {
         return self.batches[indexOf(kind)].active;
     }
 
+    pub fn progress(self: *JobPool, kind: Kind) usize {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.batches[indexOf(kind)].progress_completed;
+    }
+
     fn submit(self: *JobPool, kind: Kind, fx: anytype, paths: []const []const u8, on_event: anytype, config: protocol.Config) !void {
         if (self.stopped or paths.len == 0 or paths.len > max_jobs / 2) return error.InvalidBatch;
         const batch_index = indexOf(kind);
@@ -181,6 +188,7 @@ pub const JobPool = struct {
         batch.generation +%= 1;
         batch.submitted = paths.len;
         batch.completed = 0;
+        batch.progress_completed = 0;
         batch.active = false;
         batch.wake_armed = false;
         const generation = batch.generation;
@@ -278,6 +286,7 @@ pub const JobPool = struct {
         batch.active = false;
         batch.submitted = 0;
         batch.completed = 0;
+        batch.progress_completed = 0;
         batch.wake_armed = false;
         batch.handle = .{};
         self.removeCompletionsLocked(kind);
@@ -309,6 +318,23 @@ pub const JobPool = struct {
             }
         } else {
             completion.deinit(self.allocator);
+        }
+        self.mutex.unlock(self.io);
+        if (notify) postNotification(handle, job.id);
+    }
+
+    fn advance(self: *JobPool, job: *Job) void {
+        var handle: native_sdk.ChannelHandle = .{};
+        var notify = false;
+        self.mutex.lockUncancelable(self.io);
+        const batch = &self.batches[indexOf(job.kind)];
+        if (batch.active and batch.generation == job.generation) {
+            batch.progress_completed +|= 1;
+            if (!batch.wake_armed and batch.handle.live()) {
+                batch.wake_armed = true;
+                handle = batch.handle;
+                notify = true;
+            }
         }
         self.mutex.unlock(self.io);
         if (notify) postNotification(handle, job.id);
@@ -365,7 +391,10 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
         },
         .process => {
             var models = realesrgan.Models.init();
-            const result = operations.process(pool.allocator, pool.io, job.config, job.source, &models) catch |err| {
+            const result = operations.process(pool.allocator, pool.io, job.config, job.source, &models, .{
+                .context = job,
+                .advance_fn = reportProgress,
+            }) catch |err| {
                 pool.complete(job, .{ .failed = err });
                 pool.finishJob(job);
                 return;
@@ -374,6 +403,11 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
         },
     }
     pool.finishJob(job);
+}
+
+fn reportProgress(context: *anyopaque) void {
+    const job: *Job = @ptrCast(@alignCast(context));
+    job.pool.advance(job);
 }
 
 fn postNotification(handle: native_sdk.ChannelHandle, id: u64) void {
@@ -480,7 +514,10 @@ test "job pool completes an image conversion before shutdown" {
                     @memcpy(&bytes, event.bytes);
                     const id = std.mem.readInt(u64, &bytes, .little);
                     var completion: Completion = undefined;
-                    try std.testing.expect(pool.take(.process, id, &completion));
+                    if (!pool.take(.process, id, &completion)) {
+                        pool.rearm(.process);
+                        continue;
+                    }
                     switch (completion.outcome) {
                         .process => |*output| {
                             try std.testing.expectEqual(@as(usize, 1), output.values.items.len);
@@ -498,6 +535,86 @@ test "job pool completes an image conversion before shutdown" {
         }
     }
     try std.testing.expect(delivered);
+    try std.testing.expectEqual(@as(usize, 1), pool.progress(.process));
     try std.testing.expect(!pool.hasActiveBatch(.process));
     pool.shutdown();
+}
+
+test "job pool drains a batch beyond semaphore parallelism" {
+    const allocator = std.testing.allocator;
+    const png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const png_size = std.base64.standard.Decoder.calcSizeForSlice(png_base64) catch unreachable;
+    const png = try allocator.alloc(u8, png_size);
+    defer allocator.free(png);
+    try std.base64.standard.Decoder.decode(png, png_base64);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var fx = TestEffects.init(allocator);
+    defer fx.deinit();
+    fx.executor = .fake;
+    var pool: JobPool = undefined;
+    pool.init(allocator, std.testing.io);
+    defer pool.deinit();
+
+    const count = pool.parallelism + 1;
+    var paths: [max_workers + 1][]const u8 = undefined;
+    var owned_paths: [max_workers + 1][]u8 = undefined;
+    for (0..count) |index| {
+        const file_name = try std.fmt.allocPrint(allocator, "source{d}.png", .{index});
+        defer allocator.free(file_name);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = file_name, .data = png });
+        owned_paths[index] = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, file_name });
+        paths[index] = owned_paths[index];
+    }
+    defer for (owned_paths[0..count]) |path| allocator.free(path);
+
+    const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer allocator.free(output_directory);
+    try pool.submitProcessing(&fx, paths[0..count], .{
+        .mode = .path,
+        .path = output_directory,
+        .width = 1,
+        .quality = 80,
+    }, TestEffects.channelMsg(.channel));
+    try std.testing.expectEqual(count, pool.batches[indexOf(.process)].submitted);
+    try std.testing.expect(pool.batches[indexOf(.process)].active);
+
+    var delivered: usize = 0;
+    var attempts: usize = 0;
+    while (delivered < count and attempts < 5000) : (attempts += 1) {
+        if (fx.takeMsg()) |message| {
+            switch (message) {
+                .channel => |event| {
+                    try std.testing.expectEqual(native_sdk.EffectChannelEventKind.data, event.kind);
+                    try std.testing.expectEqual(notification_bytes, event.bytes.len);
+                    var bytes: [notification_bytes]u8 = undefined;
+                    @memcpy(&bytes, event.bytes);
+                    const id = std.mem.readInt(u64, &bytes, .little);
+                    var completion: Completion = undefined;
+                    if (!pool.take(.process, id, &completion)) {
+                        pool.rearm(.process);
+                        continue;
+                    }
+                    switch (completion.outcome) {
+                        .process => |*output| try std.testing.expectEqual(@as(usize, 1), output.values.items.len),
+                        else => return error.TestUnexpectedResult,
+                    }
+                    completion.deinit(allocator);
+                    delivered += 1;
+                    pool.rearm(.process);
+                },
+            }
+        } else {
+            try std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+        }
+    }
+
+    try std.testing.expectEqual(count, delivered);
+    try std.testing.expectEqual(count, pool.progress(.process));
+    try std.testing.expectEqual(count, pool.batches[indexOf(.process)].completed);
+    try std.testing.expect(!pool.batches[indexOf(.process)].active);
+    try std.testing.expect(!pool.batches[indexOf(.process)].wake_armed);
+    try std.testing.expectEqual(@as(usize, 0), pool.completion_count);
+    for (pool.jobs) |job| try std.testing.expect(!job.in_use);
 }

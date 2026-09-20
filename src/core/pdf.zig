@@ -109,6 +109,7 @@ pub fn toPdf(
     destination: []const u8,
     config: protocol.Config,
     ai_models: ?*realesrgan.Models,
+    progress: ?protocol.Progress,
 ) !void {
     if (sources.len == 0) return error.EmptyPdf;
 
@@ -128,6 +129,7 @@ pub fn toPdf(
             alloc.free(bytes);
             return err;
         };
+        if (progress) |reporter| reporter.advance();
     }
     const output = try createPdf(alloc, pages.items);
     defer alloc.free(output);
@@ -164,33 +166,37 @@ const RawImage = struct {
 };
 
 fn getFirstImage(pdf: *c.pdfio_file_t, filter: ?[]const u8) ?ImageObject {
-    if (c.pdfioFileGetNumPages(pdf) == 0) return null;
-    const page = c.pdfioFileGetPage(pdf, 0) orelse return null;
-    const resources = pageDictValue(page, "Resources") orelse return null;
-    const xobjects = dictValue(resources, "XObject") orelse return null;
+    const page_count = c.pdfioFileGetNumPages(pdf);
+    if (page_count == 0) return null;
 
-    for (0..c.pdfioDictGetNumPairs(xobjects)) |pair| {
-        const key = c.pdfioDictGetKey(xobjects, pair) orelse continue;
-        const object = c.pdfioDictGetObj(xobjects, key) orelse continue;
-        const dict = c.pdfioObjGetDict(object) orelse continue;
-        const subtype_name = c.pdfioDictGetName(dict, "Subtype") orelse continue;
+    for (0..page_count) |page_index| {
+        const page = c.pdfioFileGetPage(pdf, page_index) orelse continue;
+        const resources = pageDictValue(page, "Resources") orelse continue;
+        const xobjects = dictValue(resources, "XObject") orelse continue;
 
-        if (!std.mem.eql(u8, std.mem.span(subtype_name), "Image")) continue;
+        for (0..c.pdfioDictGetNumPairs(xobjects)) |pair| {
+            const key = c.pdfioDictGetKey(xobjects, pair) orelse continue;
+            const object = c.pdfioDictGetObj(xobjects, key) orelse continue;
+            const dict = c.pdfioObjGetDict(object) orelse continue;
+            const subtype_name = c.pdfioDictGetName(dict, "Subtype") orelse continue;
 
-        if (c.pdfioDictGetName(dict, "Type")) |type_name| {
-            if (!std.mem.eql(u8, std.mem.span(type_name), "XObject")) continue;
+            if (!std.mem.eql(u8, std.mem.span(subtype_name), "Image")) continue;
+
+            if (c.pdfioDictGetName(dict, "Type")) |type_name| {
+                if (!std.mem.eql(u8, std.mem.span(type_name), "XObject")) continue;
+            }
+
+            const encoding = imageEncoding(dict) orelse continue;
+            if (filter) |name| if (!hasFilter(dict, name)) continue;
+
+            const width = numberToU32(c.pdfioDictGetNumber(dict, "Width")) orelse continue;
+            const height = numberToU32(c.pdfioDictGetNumber(dict, "Height")) orelse continue;
+
+            const length = c.pdfioObjGetLength(object);
+            if (length == 0 or length > max_stream_bytes) continue;
+
+            return .{ .object = object, .dict = dict, .width = width, .height = height, .encoding = encoding };
         }
-
-        const encoding = imageEncoding(dict) orelse continue;
-        if (filter) |name| if (!hasFilter(dict, name)) continue;
-
-        const width = numberToU32(c.pdfioDictGetNumber(dict, "Width")) orelse continue;
-        const height = numberToU32(c.pdfioDictGetNumber(dict, "Height")) orelse continue;
-
-        const length = c.pdfioObjGetLength(object);
-        if (length == 0 or length > max_stream_bytes) continue;
-
-        return .{ .object = object, .dict = dict, .width = width, .height = height, .encoding = encoding };
     }
 
     return null;
@@ -308,15 +314,13 @@ fn createPdf(allocator: std.mem.Allocator, pages: []const Page) ![]u8 {
 
     for (pages, 0..) |page, index| {
         const image_dict = c.pdfioDictCreate(pdf) orelse return error.PdfCreateFailed;
-        if (
-            !c.pdfioDictSetName(image_dict, "Type", "XObject") or
+        if (!c.pdfioDictSetName(image_dict, "Type", "XObject") or
             !c.pdfioDictSetName(image_dict, "Subtype", "Image") or
             !c.pdfioDictSetNumber(image_dict, "Width", @floatFromInt(page.width)) or
             !c.pdfioDictSetNumber(image_dict, "Height", @floatFromInt(page.height)) or
             !c.pdfioDictSetNumber(image_dict, "BitsPerComponent", 8) or
             !c.pdfioDictSetName(image_dict, "ColorSpace", "DeviceRGB") or
-            !c.pdfioDictSetName(image_dict, "Filter", "DCTDecode")
-        ) return error.PdfCreateFailed;
+            !c.pdfioDictSetName(image_dict, "Filter", "DCTDecode")) return error.PdfCreateFailed;
 
         const image_object = c.pdfioFileCreateObj(pdf, image_dict) orelse return error.PdfCreateFailed;
         const image_stream = c.pdfioObjCreateStream(image_object, c.PDFIO_FILTER_NONE) orelse return error.PdfCreateFailed;
@@ -329,13 +333,11 @@ fn createPdf(allocator: std.mem.Allocator, pages: []const Page) ![]u8 {
         const xobjects = c.pdfioDictCreate(pdf) orelse return error.PdfCreateFailed;
         var image_name: [16]u8 = undefined;
         const image_name_z = std.fmt.bufPrintZ(&image_name, "Im{d}", .{index}) catch return error.PdfCreateFailed;
-        if (
-            !c.pdfioDictSetObj(xobjects, image_name_z, image_object) or
+        if (!c.pdfioDictSetObj(xobjects, image_name_z, image_object) or
             !c.pdfioDictSetDict(resources, "XObject", xobjects) or
             !c.pdfioDictSetDict(page_dict, "Resources", resources) or
             !c.pdfioDictSetRect(page_dict, "MediaBox", &page_box) or
-            !c.pdfioDictSetRect(page_dict, "CropBox", &page_box)
-        ) return error.PdfCreateFailed;
+            !c.pdfioDictSetRect(page_dict, "CropBox", &page_box)) return error.PdfCreateFailed;
 
         const page_stream = c.pdfioFileCreatePage(pdf, page_dict) orelse return error.PdfCreateFailed;
         const commands = try std.fmt.allocPrint(allocator, "q\n{d} 0 0 {d} 0 0 cm\n/{s} Do\nQ\n", .{ page.width, page.height, image_name_z });

@@ -86,7 +86,10 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
             var parsed = try zip.Archive.open(allocator, io, source);
             defer parsed.deinit();
 
-            result.count = parsed.file_count;
+            result.count = 0;
+            for (parsed.entries) |entry| {
+                if (!entry.is_dir and entry.kind == .image) result.count +|= 1;
+            }
             result.children = try archiveChildren(allocator, source, &parsed);
 
             if (parsed.firstSupportedImage()) |entry| {
@@ -130,10 +133,7 @@ fn inspectDirectory(allocator: Allocator, io: std.Io, source: []const u8, depth:
         if (child_kind != .image and child_kind != .directory) continue;
 
         const child = inspectNode(allocator, io, child_path, depth) catch |err| switch (err) {
-            error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink,
-            error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge,
-            error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge,
-            error.ImageReadFailed => continue,
+            error.UnknownType, error.UnsupportedFileKind, error.SourceNotFound, error.UnsupportedSymlink, error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge, error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge, error.ImageReadFailed => continue,
             else => return err,
         };
         if (child.kind != .image and child.kind != .directory) {
@@ -223,7 +223,14 @@ fn freeNode(allocator: Allocator, node: protocol.InspectNode) void {
     if (node.children.len != 0) allocator.free(node.children);
 }
 
-pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source: []const u8, models: *realesrgan.Models) !OutputList {
+pub fn process(
+    allocator: Allocator,
+    io: std.Io,
+    config: protocol.Config,
+    source: []const u8,
+    models: *realesrgan.Models,
+    progress: ?protocol.Progress,
+) !OutputList {
     try protocol.validateConfig(config);
 
     const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
@@ -236,10 +243,10 @@ pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source
     const ai_models: ?*realesrgan.Models = if (config.ai) models else null;
 
     switch (try kind.classifyPath(io, source, stat)) {
-        .image => try processImage(allocator, io, source, config, &outputs, ai_models),
-        .video => try processVideo(allocator, io, source, config, &outputs),
-        .directory => try processDirectory(allocator, io, source, config, &outputs, ai_models),
-        .zip => try processZip(allocator, io, source, config, &outputs, ai_models),
+        .image => try processImage(allocator, io, source, config, &outputs, ai_models, progress),
+        .video => try processVideo(allocator, io, source, config, &outputs, progress),
+        .directory => try processDirectory(allocator, io, source, config, &outputs, ai_models, progress),
+        .zip => try processZip(allocator, io, source, config, &outputs, ai_models, progress),
         .pdf, .archive_file => return error.UnsupportedSource,
     }
 
@@ -248,7 +255,15 @@ pub fn process(allocator: Allocator, io: std.Io, config: protocol.Config, source
     return outputs;
 }
 
-fn processImage(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*realesrgan.Models) !void {
+fn processImage(
+    allocator: Allocator,
+    io: std.Io,
+    source: []const u8,
+    config: protocol.Config,
+    outputs: *OutputList,
+    ai_models: ?*realesrgan.Models,
+    progress: ?protocol.Progress,
+) !void {
     const destination = try target(allocator, io, source, config, "jpg");
     defer allocator.free(destination);
 
@@ -258,15 +273,17 @@ fn processImage(allocator: Allocator, io: std.Io, source: []const u8, config: pr
     try storage.writeAtomic(io, destination, bytes);
 
     try appendOutput(allocator, outputs, destination);
+    if (progress) |reporter| reporter.advance();
 }
 
-fn processVideo(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList) !void {
+fn processVideo(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, progress: ?protocol.Progress) !void {
     const destination = try target(allocator, io, source, config, "gif");
     defer allocator.free(destination);
 
     try video.convertMp4ToGif(allocator, io, source, destination);
 
     try appendOutput(allocator, outputs, destination);
+    if (progress) |reporter| reporter.advance();
 }
 
 fn processZip(
@@ -276,6 +293,7 @@ fn processZip(
     config: protocol.Config,
     outputs: *OutputList,
     ai_models: ?*realesrgan.Models,
+    progress: ?protocol.Progress,
 ) !void {
     if (config.dir_mode != .pdf) return error.UnsupportedSource;
 
@@ -308,6 +326,7 @@ fn processZip(
             allocator.free(encoded);
             return err;
         };
+        if (progress) |reporter| reporter.advance();
     }
     if (pages.items.len == 0) return error.EmptyArchive;
 
@@ -317,14 +336,22 @@ fn processZip(
     try appendOutput(allocator, outputs, destination);
 }
 
-fn processDirectory(allocator: Allocator, io: std.Io, source: []const u8, config: protocol.Config, outputs: *OutputList, ai_models: ?*realesrgan.Models) !void {
+fn processDirectory(
+    allocator: Allocator,
+    io: std.Io,
+    source: []const u8,
+    config: protocol.Config,
+    outputs: *OutputList,
+    ai_models: ?*realesrgan.Models,
+    progress: ?protocol.Progress,
+) !void {
     var entries = try collectDirectory(allocator, io, source);
     defer entries.deinit(allocator);
 
     std.mem.sort(archive.FileEntry, entries.items, {}, lessFileEntry);
 
     if (config.dir_mode == .none) {
-        for (entries.items) |entry| if (entry.kind == .image) try processImage(allocator, io, entry.source, config, outputs, ai_models);
+        for (entries.items) |entry| if (entry.kind == .image) try processImage(allocator, io, entry.source, config, outputs, ai_models, progress);
         return;
     }
 
@@ -339,9 +366,9 @@ fn processDirectory(allocator: Allocator, io: std.Io, source: []const u8, config
         for (entries.items) |entry| if (entry.kind == .image) try sources.append(allocator, entry.source);
         if (sources.items.len == 0) return error.EmptyDirectory;
 
-        try pdf.toPdf(allocator, io, sources.items, destination, config, ai_models);
+        try pdf.toPdf(allocator, io, sources.items, destination, config, ai_models, progress);
     } else {
-        try archive.createZip(allocator, io, entries.items, destination, config, ai_models);
+        try archive.createZip(allocator, io, entries.items, destination, config, ai_models, progress);
     }
 
     try appendOutput(allocator, outputs, destination);
@@ -390,9 +417,7 @@ fn collectDirectory(allocator: Allocator, io: std.Io, root: []const u8) !EntryLi
             continue;
         }
         _ = image.dimensions(allocator, io, source) catch |err| switch (err) {
-            error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge,
-            error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge,
-            error.SourceNotFound, error.ImageReadFailed => {
+            error.ImageDecodeFailed, error.InvalidImage, error.ImageDimensionsTooLarge, error.ImagePixelsTooLarge, error.ImageAllocationTooLarge, error.ImageInputTooLarge, error.SourceNotFound, error.ImageReadFailed => {
                 allocator.free(source);
                 continue;
             },

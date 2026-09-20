@@ -128,6 +128,8 @@ pub const Model = struct {
     job_pool: ?*jobs.JobPool = null,
     inspect_completed: usize = 0,
     process_completed: usize = 0,
+    process_total: usize = 0,
+    process_roots_completed: usize = 0,
     process_last_root: usize = 0,
     inspecting: bool = false,
     processing: bool = false,
@@ -211,15 +213,15 @@ pub const Model = struct {
             if (item.depth != 0) continue;
             total_count += if (item.count == 0) 1 else item.count;
         }
-        return std.fmt.allocPrint(arena, "{d}개 항목", .{ total_count }) catch "항목 정보";
+        return std.fmt.allocPrint(arena, "{d}개 항목", .{total_count}) catch "항목 정보";
     }
     pub fn progressValue(model: *const Model) f32 {
         if (!model.processing) return if (model.hasOutput()) 1 else 0;
-        if (model.root_count == 0) return 0;
-        return @as(f32, @floatFromInt(model.process_completed)) / @as(f32, @floatFromInt(model.root_count));
+        if (model.process_total == 0) return 0;
+        return @as(f32, @floatFromInt(@min(model.process_completed, model.process_total))) / @as(f32, @floatFromInt(model.process_total));
     }
     pub fn progressLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
-        if (model.processing) return std.fmt.allocPrint(arena, "변환 중 {d}/{d}", .{ @min(model.process_completed, model.root_count), model.root_count }) catch "변환 중";
+        if (model.processing) return std.fmt.allocPrint(arena, "변환 중 {d}/{d}", .{ @min(model.process_completed, model.process_total), model.process_total }) catch "변환 중";
         if (model.hasOutput()) return std.fmt.allocPrint(arena, "변환 완료 · {d}개 결과", .{model.output_count}) catch "변환 완료";
         return "대기 중";
     }
@@ -483,6 +485,8 @@ pub const Model = struct {
         model.root_count = 0;
         model.inspect_completed = 0;
         model.process_completed = 0;
+        model.process_total = 0;
+        model.process_roots_completed = 0;
         model.process_last_root = 0;
         model.output_count = 0;
         model.output_last_len = 0;
@@ -574,6 +578,19 @@ pub const Model = struct {
         return count;
     }
 
+    fn processTargetTotal(model: *const Model) usize {
+        var total: usize = 0;
+        for (model.items[0..model.item_count]) |item| {
+            if (item.depth != 0) continue;
+            const count: usize = switch (item.kind) {
+                .directory, .pdf, .zip => @intCast(item.count),
+                else => 1,
+            };
+            total +|= count;
+        }
+        return total;
+    }
+
     fn submitInspection(model: *Model, fx: *Effects) void {
         const pool = model.job_pool orelse {
             model.inspecting = false;
@@ -606,7 +623,10 @@ pub const Model = struct {
 
     fn loadThumbnails(model: *Model, fx: *Effects, root_index: u16) void {
         for (model.items[0..model.item_count]) |*item| {
-            if (item.root_index == root_index) model.loadThumbnail(item, fx);
+            if (item.root_index == root_index and item.depth == 0) {
+                model.loadThumbnail(item, fx);
+                break;
+            }
         }
     }
 
@@ -747,7 +767,7 @@ pub const Model = struct {
                 model.inspect_completed += 1;
             },
             .process => |result| {
-                model.process_completed += 1;
+                model.process_roots_completed += 1;
                 if (result.values.items.len == 0) {
                     model.setError("변환된 파일이 없습니다");
                 } else {
@@ -763,7 +783,7 @@ pub const Model = struct {
                     model.inspectFailure(root_index, jobError(.inspect));
                     model.inspect_completed += 1;
                 } else {
-                    model.process_completed += 1;
+                    model.process_roots_completed += 1;
                     model.setError(jobError(.process));
                 }
             },
@@ -805,11 +825,12 @@ pub const Model = struct {
             completion.deinit(pool.allocator);
             first = false;
         }
+        if (kind == .process) model.process_completed = @min(model.process_total, pool.progress(.process));
         if (kind == .inspect and model.inspect_completed >= model.root_count) {
             model.inspecting = false;
             if (!model.hasError()) setStatus(model, "파일을 준비했습니다");
         }
-        if (kind == .process and model.process_completed >= model.root_count) {
+        if (kind == .process and model.process_roots_completed >= model.root_count) {
             model.processing = false;
             if (!model.hasError()) setStatus(model, "변환을 완료했습니다");
         }
@@ -875,6 +896,8 @@ pub const Model = struct {
                 if (!model.canProcess()) return;
                 model.processing = true;
                 model.process_completed = 0;
+                model.process_total = model.processTargetTotal();
+                model.process_roots_completed = 0;
                 model.process_last_root = 0;
                 model.output_count = 0;
                 model.output_last_len = 0;

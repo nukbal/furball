@@ -21,6 +21,7 @@ pub fn createZip(
     destination: []const u8,
     config: protocol.Config,
     ai_models: ?*realesrgan.Models,
+    progress: ?protocol.Progress,
 ) !void {
     if (files.len == 0) return error.EmptyArchive;
     var output = std.ArrayList(zip.ImageEntry).empty;
@@ -46,6 +47,7 @@ pub fn createZip(
             alloc.free(encoded);
             return err;
         };
+        if (progress) |reporter| reporter.advance();
     }
 
     if (output.items.len == 0) return error.EmptyArchive;

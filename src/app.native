@@ -29,12 +29,15 @@
           <column gap="4">
             <for each="visible" key="path" as="file">
               <list-item padding="9" gap="9" cross="center" selected="{file.selected}" role="treeitem" tree-level="{file.level}" on-press="select_item:{file.root_index}" on-change="select_item:{file.root_index}" label="{file.name}">
-                <if test="{file.kind == 'directory'}">
+                <if test="{file.image_id != 0}">
+                  <image image="{file.image_id}" width="22" height="22" label="{file.name}" />
+                </if>
+                <if test="{file.image_id == 0 and file.kind == 'directory'}">
                   <icon name="folder" width="22" height="22" foreground="text_muted" />
                 </if>
-                <else>
+                <if test="{file.image_id == 0 and file.kind != 'directory'}">
                   <icon name="file-text" width="22" height="22" foreground="text_muted" />
-                </else>
+                </if>
                 <column grow="1" gap="3">
                   <text wrap="false">{file.name}</text>
                   <text size="sm" foreground="text_muted">{file.metadata}</text>

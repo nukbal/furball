@@ -2,6 +2,7 @@ const std = @import("std");
 
 const mozjpeg = @import("mozjpeg");
 const stb = @import("stb");
+const webp = @import("webp");
 const protocol = @import("protocol.zig");
 const realesrgan = @import("realesrgan.zig");
 const storage = @import("storage.zig");
@@ -195,6 +196,23 @@ pub fn thumbnailBytesFromRgb(alloc: Allocator, width: u32, height: u32, pixels: 
 
 fn decode(alloc: Allocator, bytes: []const u8) !DecodedImage {
     const info = try inspectMemory(bytes);
+    if (isWebp(bytes)) {
+        const byte_count = try byteCount(info);
+        const pixels = try alloc.alloc(u8, byte_count);
+        errdefer alloc.free(pixels);
+
+        const decoded = webp.WebPDecodeRGBInto(
+            bytes.ptr,
+            bytes.len,
+            pixels.ptr,
+            byte_count,
+            @intCast(try stride(info.width)),
+        ) orelse return error.ImageDecodeFailed;
+        _ = decoded;
+
+        return .{ .pixels = pixels, .width = info.width, .height = info.height };
+    }
+
     var width: c_int = 0;
     var height: c_int = 0;
     var source_channels: c_int = 0;
@@ -347,11 +365,25 @@ const DecodedImage = struct {
 
 pub fn inspectMemory(bytes: []const u8) !ImageInfo {
     if (bytes.len == 0 or bytes.len > max_input_bytes) return error.InvalidImage;
+
+    if (isWebp(bytes)) {
+        var width: c_int = 0;
+        var height: c_int = 0;
+        if (webp.WebPGetInfo(bytes.ptr, bytes.len, &width, &height) == 0) return error.ImageDecodeFailed;
+        return checkedInfo(width, height);
+    }
+
     var width: c_int = 0;
     var height: c_int = 0;
     var channels_found: c_int = 0;
     if (stb.stbi_info_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &channels_found) == 0) return error.ImageDecodeFailed;
     return checkedInfo(width, height);
+}
+
+fn isWebp(bytes: []const u8) bool {
+    return bytes.len >= 12 and
+        std.mem.eql(u8, bytes[0..4], "RIFF") and
+        std.mem.eql(u8, bytes[8..12], "WEBP");
 }
 
 fn checkedInfo(width: c_int, height: c_int) !ImageInfo {
@@ -463,4 +495,21 @@ test "png decode resize and mozjpeg encode complete" {
     try std.testing.expect(output.len > 2);
     try std.testing.expectEqualSlices(u8, "\xff\xd8", output[0..2]);
     try std.testing.expectEqual(ImageInfo{ .width = 16, .height = 12 }, try inspectMemory(output));
+}
+
+test "webp decode and mozjpeg encode complete" {
+    const alloc = std.testing.allocator;
+    const encoded = "UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=";
+
+    const input = try alloc.alloc(u8, std.base64.standard.Decoder.calcSizeForSlice(encoded) catch unreachable);
+    defer alloc.free(input);
+    try std.base64.standard.Decoder.decode(input, encoded);
+
+    try std.testing.expectEqual(ImageInfo{ .width = 1, .height = 1 }, try inspectMemory(input));
+
+    const output = try encodeBytesFromMemory(alloc, std.testing.io, input, .{ .width = 1, .quality = 88, .ai = false });
+    defer alloc.free(output);
+
+    try std.testing.expectEqualSlices(u8, "\xff\xd8", output[0..2]);
+    try std.testing.expectEqual(ImageInfo{ .width = 1, .height = 1 }, try inspectMemory(output));
 }

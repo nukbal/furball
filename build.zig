@@ -39,6 +39,7 @@ fn addFfmpegPackageStep(b: *std.Build, ffmpeg_prefix: []const u8) void {
 fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: []const u8) void {
     const target = app.exe.root_module.resolved_target.?;
     const optimize = app.exe.root_module.optimize.?;
+    const arch = target.result.cpu.arch;
     var mods = [2]*std.Build.Module{ app.exe.root_module, app.tests.root_module };
     const mod_count: usize = if (mods[0] == mods[1]) 1 else 2;
     for (mods[0..mod_count]) |module| module.link_libcpp = true;
@@ -99,6 +100,58 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
                 .file = b.path("libs/stb_impl.c"),
                 .flags = &.{"-std=c99"},
             });
+        }
+    }
+
+    {
+        const dep = b.dependency("libwebp", .{});
+        const mod = b.addTranslateC(.{
+            .root_source_file = dep.path("src/webp/decode.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        mod.addIncludePath(dep.path("."));
+
+        for (mods[0..mod_count]) |module| {
+            module.addImport("webp", mod.createModule());
+            module.addIncludePath(dep.path("."));
+            module.addCSourceFiles(.{
+                .root = dep.path("src"),
+                .files = &.{
+                    "dec/alpha_dec.c",                "dec/buffer_dec.c",      "dec/frame_dec.c",        "dec/idec_dec.c",
+                    "dec/io_dec.c",                   "dec/quant_dec.c",       "dec/tree_dec.c",         "dec/vp8_dec.c",
+                    "dec/vp8l_dec.c",                 "dec/webp_dec.c",        "dsp/alpha_processing.c", "dsp/cpu.c",
+                    "dsp/dec.c",                      "dsp/dec_clip_tables.c", "dsp/filters.c",          "dsp/lossless.c",
+                    "dsp/rescaler.c",                 "dsp/upsampling.c",      "dsp/yuv.c",              "utils/bit_reader_utils.c",
+                    "utils/color_cache_utils.c",      "utils/filters_utils.c", "utils/huffman_utils.c",  "utils/palette.c",
+                    "utils/quant_levels_dec_utils.c", "utils/random_utils.c",  "utils/rescaler_utils.c", "utils/thread_utils.c",
+                    "utils/utils.c",
+                },
+                .flags = &.{"-std=c99"},
+            });
+            if (arch == .aarch64 or arch == .arm) {
+                module.addCSourceFiles(.{
+                    .root = dep.path("src"),
+                    .files = &.{
+                        "dsp/alpha_processing_neon.c", "dsp/dec_neon.c",      "dsp/filters_neon.c",
+                        "dsp/lossless_neon.c",         "dsp/rescaler_neon.c", "dsp/upsampling_neon.c",
+                        "dsp/yuv_neon.c",
+                    },
+                    .flags = &.{"-std=c99"},
+                });
+            } else if (arch == .x86_64 or arch == .x86) {
+                module.addCSourceFiles(.{
+                    .root = dep.path("src"),
+                    .files = &.{
+                        "dsp/alpha_processing_sse2.c", "dsp/dec_sse2.c",               "dsp/filters_sse2.c",
+                        "dsp/lossless_sse2.c",         "dsp/rescaler_sse2.c",          "dsp/upsampling_sse2.c",
+                        "dsp/yuv_sse2.c",              "dsp/alpha_processing_sse41.c", "dsp/dec_sse41.c",
+                        "dsp/lossless_sse41.c",        "dsp/upsampling_sse41.c",       "dsp/yuv_sse41.c",
+                        "dsp/lossless_avx2.c",
+                    },
+                    .flags = &.{"-std=c99"},
+                });
+            }
         }
     }
 

@@ -9,7 +9,8 @@ pub fn isImageExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".jpeg") or
         std.ascii.eqlIgnoreCase(extension, ".png") or
         std.ascii.eqlIgnoreCase(extension, ".bmp") or
-        std.ascii.eqlIgnoreCase(extension, ".tga");
+        std.ascii.eqlIgnoreCase(extension, ".tga") or
+        std.ascii.eqlIgnoreCase(extension, ".webp");
 }
 
 pub fn classifyPath(io: std.Io, path: []const u8, stat: std.Io.File.Stat) !protocol.Kind {
@@ -24,6 +25,7 @@ pub fn classifyPath(io: std.Io, path: []const u8, stat: std.Io.File.Stat) !proto
     if (length >= 3 and std.mem.eql(u8, header[0..3], "\xff\xd8\xff")) return .image;
     if (length >= 8 and std.mem.eql(u8, header[0..8], "\x89PNG\r\n\x1a\n")) return .image;
     if (length >= 2 and std.mem.eql(u8, header[0..2], "BM")) return .image;
+    if (length >= 12 and std.mem.eql(u8, header[0..4], "RIFF") and std.mem.eql(u8, header[8..12], "WEBP")) return .image;
 
     const extension = std.fs.path.extension(path);
     if (std.ascii.eqlIgnoreCase(extension, ".mp4")) return .video;

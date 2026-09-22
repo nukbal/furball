@@ -35,7 +35,7 @@ fn fixturePng(allocator: std.mem.Allocator) ![]u8 {
 fn fixtureJpeg(allocator: std.mem.Allocator) ![]u8 {
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    return image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1, .quality = 80, .ai = false }, null);
+    return image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1, .quality = 80, .ai = false });
 }
 
 fn fixtureFlatePdf(allocator: std.mem.Allocator) ![]u8 {
@@ -337,7 +337,7 @@ test "fixed image pipeline never upscales without AI" {
     const allocator = std.testing.allocator;
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    const output = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = false }, null);
+    const output = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = false });
     defer allocator.free(output);
     const dimensions = try image.inspectMemory(output);
     try std.testing.expectEqual(@as(u32, 1), dimensions.width);
@@ -350,7 +350,7 @@ test "AI upscale reports unavailable without a backend" {
     defer allocator.free(png);
     try std.testing.expectError(
         error.AiUnavailable,
-        image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = true }, null),
+        image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = true }),
     );
 }
 
@@ -409,35 +409,19 @@ test "model config contains only fixed processing controls" {
     try std.testing.expectEqual(@as(u32, 1440), model.config.width);
 }
 
-test "progress uses internal directory and PDF target counts" {
+test "progress displays the current target count" {
     var model = main.Model{};
     var effects = main.Effects.init(std.testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
 
-    model.root_count = 3;
-    model.item_count = 3;
-    model.items[0].kind = .image;
-    model.items[1].kind = .directory;
-    model.items[1].count = 17;
-    model.items[2].kind = .pdf;
-    model.items[2].count = 2;
-    for (model.items[0..model.item_count]) |*item| {
-        item.inspected = true;
-        item.inspect_ok = true;
-    }
-    main.Model.copyPath(&model.output_storage, &model.output_len, "/tmp");
-    model.config.mode = .path;
-
-    main.update(&model, .process, &effects);
-    try std.testing.expectEqual(@as(usize, 20), model.process_total);
-
     model.processing = true;
+    model.process_total = 20;
     model.process_completed = 10;
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), model.progressValue(), 0.0001);
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectEqualStrings("변환 중 10/20", model.progressLabel(arena.allocator()));
+    try std.testing.expectEqualStrings("변환 중... 10/20", model.processLabel(arena.allocator()));
 }
 
 test "zip memory writer round trips natural first image" {
@@ -563,6 +547,7 @@ test "pdf input converts XObject images into a new PDF in page order" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
@@ -592,6 +577,7 @@ test "pdf input converts Flate image XObjects" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
@@ -622,6 +608,7 @@ test "pdf input converts ASCII85 wrapped JPEG image XObjects" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
@@ -648,7 +635,7 @@ test "pdf input keeps images before and after blank interior pages" {
 
     var inspected = try operations.inspect(allocator, std.testing.io, source_path);
     defer operations.freeResponse(allocator, &inspected);
-    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expectEqual(@as(u32, 4), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob != null);
 
     var progress: ProgressCounter = .{};
@@ -657,12 +644,13 @@ test "pdf input keeps images before and after blank interior pages" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
-    try std.testing.expectEqual(@as(usize, 2), progress.value);
-    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+    try std.testing.expectEqual(@as(usize, 4), progress.value);
+    try std.testing.expectEqual(@as(u32, 4), try pdf.pageCount(allocator, outputs.values.items[0]));
 }
 
 test "pdf input keeps boundary images inside form XObjects" {
@@ -683,7 +671,7 @@ test "pdf input keeps boundary images inside form XObjects" {
 
     var inspected = try operations.inspect(allocator, std.testing.io, source_path);
     defer operations.freeResponse(allocator, &inspected);
-    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expectEqual(@as(u32, 4), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob != null);
 
     var progress: ProgressCounter = .{};
@@ -692,12 +680,13 @@ test "pdf input keeps boundary images inside form XObjects" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
-    try std.testing.expectEqual(@as(usize, 2), progress.value);
-    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+    try std.testing.expectEqual(@as(usize, 4), progress.value);
+    try std.testing.expectEqual(@as(u32, 4), try pdf.pageCount(allocator, outputs.values.items[0]));
 }
 
 test "pdf input keeps direct resource images without page streams" {
@@ -718,7 +707,7 @@ test "pdf input keeps direct resource images without page streams" {
 
     var inspected = try operations.inspect(allocator, std.testing.io, source_path);
     defer operations.freeResponse(allocator, &inspected);
-    try std.testing.expectEqual(@as(u32, 2), inspected.count);
+    try std.testing.expectEqual(@as(u32, 4), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob != null);
 
     var progress: ProgressCounter = .{};
@@ -727,12 +716,66 @@ test "pdf input keeps direct resource images without page streams" {
         .path = output_directory,
         .width = 1,
         .quality = 80,
+        .dir_mode = .pdf,
     }, source_path, progress.reporter());
     defer outputs.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), outputs.values.items.len);
-    try std.testing.expectEqual(@as(usize, 2), progress.value);
-    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, outputs.values.items[0]));
+    try std.testing.expectEqual(@as(usize, 4), progress.value);
+    try std.testing.expectEqual(@as(u32, 4), try pdf.pageCount(allocator, outputs.values.items[0]));
+}
+
+test "pdf pages use page names for individual and zip output" {
+    const allocator = std.testing.allocator;
+    const jpeg = try fixtureJpeg(allocator);
+    defer allocator.free(jpeg);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const source_path = try testPath(&tmp, allocator, "source.pdf");
+    defer allocator.free(source_path);
+    const jpg_output_directory = try testPath(&tmp, allocator, "jpg");
+    defer allocator.free(jpg_output_directory);
+    const zip_output_directory = try testPath(&tmp, allocator, "zip");
+    defer allocator.free(zip_output_directory);
+    try tmp.dir.createDirPath(std.testing.io, "jpg");
+    try tmp.dir.createDirPath(std.testing.io, "zip");
+
+    const pages = [_]pdf.Page{
+        .{ .bytes = jpeg, .width = 1, .height = 1 },
+        .{ .bytes = jpeg, .width = 1, .height = 1 },
+    };
+    try pdf.createFromJpegs(allocator, std.testing.io, &pages, source_path);
+
+    var jpg_progress: ProgressCounter = .{};
+    var jpg_outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = jpg_output_directory,
+        .width = 1,
+        .quality = 80,
+    }, source_path, jpg_progress.reporter());
+    defer jpg_outputs.deinit();
+    try std.testing.expectEqual(@as(usize, 2), jpg_outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), jpg_progress.value);
+    try std.testing.expectEqualStrings("1.jpg", std.fs.path.basename(jpg_outputs.values.items[0]));
+    try std.testing.expectEqualStrings("2.jpg", std.fs.path.basename(jpg_outputs.values.items[1]));
+
+    var zip_progress: ProgressCounter = .{};
+    var zip_outputs = try operations.process(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = zip_output_directory,
+        .width = 1,
+        .quality = 80,
+        .dir_mode = .zip,
+    }, source_path, zip_progress.reporter());
+    defer zip_outputs.deinit();
+    try std.testing.expectEqual(@as(usize, 1), zip_outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), zip_progress.value);
+    var archive = try zip.Archive.open(allocator, std.testing.io, zip_outputs.values.items[0]);
+    defer archive.deinit();
+    try std.testing.expectEqual(@as(u32, 2), archive.file_count);
+    try std.testing.expectEqualStrings("1.jpg", archive.entries[0].name);
+    try std.testing.expectEqualStrings("2.jpg", archive.entries[1].name);
 }
 
 test "pdf thumbnail reads a Flate encoded RGB image XObject" {
@@ -789,7 +832,7 @@ test "pdf thumbnail only uses the first page image XObject" {
     var inspected = try operations.inspect(allocator, std.testing.io, path);
     defer operations.freeResponse(allocator, &inspected);
     try std.testing.expectEqual(protocol.Kind.pdf, inspected.kind);
-    try std.testing.expectEqual(@as(u32, 1), inspected.count);
+    try std.testing.expectEqual(@as(u32, 2), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob == null);
 }
 
@@ -805,7 +848,7 @@ test "pdf inspection succeeds without a supported image preview" {
     var inspected = try operations.inspect(allocator, std.testing.io, path);
     defer operations.freeResponse(allocator, &inspected);
     try std.testing.expectEqual(protocol.Kind.pdf, inspected.kind);
-    try std.testing.expectEqual(@as(u32, 0), inspected.count);
+    try std.testing.expectEqual(@as(u32, 1), inspected.count);
     try std.testing.expect(inspected.thumbnail_blob == null);
 }
 
@@ -832,6 +875,183 @@ test "folder inspection keeps images and ignores nonimage files" {
     try std.testing.expectEqual(@as(usize, 1), response.children.len);
     try std.testing.expectEqualStrings("first.png", response.children[0].name);
     try std.testing.expect(response.thumbnail != null);
+}
+
+test "folder preview uses the first image in the flattened tree" {
+    const allocator = std.testing.allocator;
+    const png = try fixturePng(allocator);
+    defer allocator.free(png);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "photos/nested");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/nested/first.png", .data = png });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "photos/second.png", .data = png });
+    const path = try testPath(&tmp, allocator, "photos");
+    defer allocator.free(path);
+    const first_path = try testPath(&tmp, allocator, "photos/nested/first.png");
+    defer allocator.free(first_path);
+
+    var response = try operations.inspect(allocator, std.testing.io, path);
+    defer operations.freeResponse(allocator, &response);
+    try std.testing.expectEqual(@as(u32, 2), response.count);
+    try std.testing.expectEqualStrings(first_path, response.thumbnail.?);
+}
+
+test "direct image batches follow PDF and ZIP modes" {
+    const allocator = std.testing.allocator;
+    const png = try fixturePng(allocator);
+    defer allocator.free(png);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "pdf");
+    try tmp.dir.createDirPath(std.testing.io, "zip");
+
+    const first_path = try testPath(&tmp, allocator, "first.png");
+    defer allocator.free(first_path);
+    const second_path = try testPath(&tmp, allocator, "second.png");
+    defer allocator.free(second_path);
+    const pdf_output_directory = try testPath(&tmp, allocator, "pdf");
+    defer allocator.free(pdf_output_directory);
+    const zip_output_directory = try testPath(&tmp, allocator, "zip");
+    defer allocator.free(zip_output_directory);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "first.png", .data = png });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "second.png", .data = png });
+
+    const sources = [_]protocol.Source{
+        .{ .path = first_path, .name = "first.png", .root = first_path, .kind = .image },
+        .{ .path = second_path, .name = "second.png", .root = second_path, .kind = .image },
+    };
+    var pdf_progress: ProgressCounter = .{};
+    var pdf_outputs = try operations.processSources(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = pdf_output_directory,
+        .width = 1,
+        .quality = 80,
+        .dir_mode = .pdf,
+    }, &sources, pdf_progress.reporter());
+    defer pdf_outputs.deinit();
+    try std.testing.expectEqual(@as(usize, 1), pdf_outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), pdf_progress.value);
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, pdf_outputs.values.items[0]));
+
+    var zip_progress: ProgressCounter = .{};
+    var zip_outputs = try operations.processSources(allocator, std.testing.io, .{
+        .mode = .path,
+        .path = zip_output_directory,
+        .width = 1,
+        .quality = 80,
+        .dir_mode = .zip,
+    }, &sources, zip_progress.reporter());
+    defer zip_outputs.deinit();
+    try std.testing.expectEqual(@as(usize, 1), zip_outputs.values.items.len);
+    try std.testing.expectEqual(@as(usize, 2), zip_progress.value);
+    var archive = try zip.Archive.open(allocator, std.testing.io, zip_outputs.values.items[0]);
+    defer archive.deinit();
+    try std.testing.expectEqual(@as(u32, 2), archive.file_count);
+}
+
+test "model combines folders and direct files for PDF and ZIP output" {
+    const allocator = std.testing.allocator;
+    const png = try fixturePng(allocator);
+    defer allocator.free(png);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "pdf");
+    try tmp.dir.createDirPath(std.testing.io, "zip");
+    try tmp.dir.createDirPath(std.testing.io, "folder");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "folder/inside.png", .data = png });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "second.png", .data = png });
+
+    const folder_path = try testPath(&tmp, allocator, "folder");
+    defer allocator.free(folder_path);
+    const second_path = try testPath(&tmp, allocator, "second.png");
+    defer allocator.free(second_path);
+    const selected = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ folder_path, second_path });
+    defer allocator.free(selected);
+    const pdf_output_directory = try testPath(&tmp, allocator, "pdf");
+    defer allocator.free(pdf_output_directory);
+    const zip_output_directory = try testPath(&tmp, allocator, "zip");
+    defer allocator.free(zip_output_directory);
+
+    var pool: main.JobPool = undefined;
+    pool.init(allocator, std.testing.io);
+    defer pool.deinit();
+    var fx = main.Effects.init(allocator);
+    defer fx.deinit();
+    fx.executor = .fake;
+    fx.fake_instant_image_bytes = png;
+
+    var model = main.Model{ .job_pool = &pool };
+    main.update(&model, .{ .dialog_ready = .{ .paths = selected, .count = 2 } }, &fx);
+
+    var steps: usize = 0;
+    while ((model.inspecting or model.thumbnail_pending != 0) and steps < 1000) : (steps += 1) {
+        if (fx.takeMsg()) |message| {
+            main.update(&model, message, &fx);
+        } else {
+            try std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+        }
+    }
+    try std.testing.expect(steps < 1000);
+    try std.testing.expectEqual(@as(usize, 2), model.root_count);
+
+    main.Model.copyPath(&model.output_storage, &model.output_len, pdf_output_directory);
+    model.config.mode = .path;
+    model.config.width = 1;
+    model.config.quality = 80;
+    model.config.dir_mode = .pdf;
+    main.update(&model, .process, &fx);
+    try std.testing.expectEqual(@as(usize, 2), model.process_total);
+    try std.testing.expectEqual(@as(usize, 2), model.process_source_count);
+
+    steps = 0;
+    while (model.processing and steps < 1000) : (steps += 1) {
+        if (fx.takeMsg()) |message| {
+            main.update(&model, message, &fx);
+        } else {
+            try std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+        }
+    }
+    try std.testing.expect(steps < 1000);
+    try std.testing.expect(!model.processing);
+    try std.testing.expectEqual(@as(usize, 1), model.output_count);
+    try std.testing.expectEqual(@as(usize, 2), model.process_completed);
+    try std.testing.expectEqualStrings("folder.pdf", std.fs.path.basename(model.output_last_storage[0..model.output_last_len]));
+    try std.testing.expectEqual(@as(u32, 2), try pdf.pageCount(allocator, model.output_last_storage[0..model.output_last_len]));
+
+    main.Model.copyPath(&model.output_storage, &model.output_len, zip_output_directory);
+    model.config.dir_mode = .zip;
+    main.update(&model, .process, &fx);
+
+    steps = 0;
+    while (model.processing and steps < 1000) : (steps += 1) {
+        if (fx.takeMsg()) |message| {
+            main.update(&model, message, &fx);
+        } else {
+            try std.Io.sleep(std.testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+        }
+    }
+    try std.testing.expect(steps < 1000);
+    try std.testing.expect(!model.processing);
+    try std.testing.expectEqual(@as(usize, 1), model.output_count);
+    try std.testing.expectEqualStrings("folder.zip", std.fs.path.basename(model.output_last_storage[0..model.output_last_len]));
+    var archive = try zip.Archive.open(allocator, std.testing.io, model.output_last_storage[0..model.output_last_len]);
+    defer archive.deinit();
+    try std.testing.expectEqual(@as(u32, 2), archive.file_count);
+}
+
+test "model rejects a PDF mixed with multiple selected files" {
+    var model = main.Model{};
+    var fx = main.Effects.init(std.testing.allocator);
+    defer fx.deinit();
+    fx.executor = .fake;
+
+    main.update(&model, .{ .dialog_ready = .{ .paths = "/tmp/source.pdf\n/tmp/image.png", .count = 2 } }, &fx);
+
+    try std.testing.expectEqual(@as(usize, 0), model.root_count);
+    try std.testing.expectEqualStrings("PDF는 한 번에 하나만 선택할 수 있습니다", model.errorText());
 }
 
 test "folder with 16 or more images completes inspection and processing" {
@@ -948,8 +1168,6 @@ test "folder with 16 or more images completes inspection and processing" {
     try std.testing.expectEqual(image_count, model.output_count);
     try std.testing.expectEqual(image_count, model.process_completed);
     try std.testing.expect(!model.processing);
-    main.update(&model, .clear_files, &fx);
-    try std.testing.expectEqual(@as(usize, 0), model.thumbnail_pending);
 }
 
 test "dialog and drop replace inspected roots and their trees" {
@@ -1027,7 +1245,7 @@ test "dialog and drop replace inspected roots and their trees" {
     try std.testing.expectEqual(@as(usize, 1), model.output_count);
     try std.testing.expect(!model.processing);
 
-    main.update(&model, .clear_files, &fx);
+    main.update(&model, .{ .remove_file = 0 }, &fx);
     try std.testing.expectEqual(@as(usize, 0), model.root_count);
     try std.testing.expectEqual(@as(usize, 0), model.item_count);
     try std.testing.expectEqual(@as(usize, 0), model.thumbnail_pending);

@@ -13,6 +13,7 @@ const TestEffects = native_sdk.Effects(TestMsg);
 
 pub const max_workers: usize = 8;
 pub const max_jobs: usize = 128;
+pub const max_batch_sources: usize = 2048;
 pub const notification_bytes: usize = @sizeOf(u64);
 
 pub const Kind = enum { inspect, process };
@@ -47,6 +48,7 @@ const Job = struct {
     root_index: u16,
     kind: Kind,
     source: []u8,
+    sources: ?[]protocol.Source = null,
     config: protocol.Config,
     in_use: bool = false,
 };
@@ -111,11 +113,11 @@ pub const JobPool = struct {
     }
 
     pub fn submitInspection(self: *JobPool, fx: anytype, paths: []const []const u8, on_event: anytype) !void {
-        try self.submit(.inspect, fx, paths, on_event, .{});
+        try self.submit(.inspect, fx, paths, &.{}, on_event, .{}, false);
     }
 
-    pub fn submitProcessing(self: *JobPool, fx: anytype, paths: []const []const u8, config: protocol.Config, on_event: anytype) !void {
-        try self.submit(.process, fx, paths, on_event, config);
+    pub fn submitProcessingBatch(self: *JobPool, fx: anytype, sources: []const protocol.Source, config: protocol.Config, on_event: anytype) !void {
+        try self.submit(.process, fx, &.{}, sources, on_event, config, true);
     }
 
     pub fn cancelInspection(self: *JobPool, fx: anytype) void {
@@ -177,8 +179,18 @@ pub const JobPool = struct {
         return self.batches[indexOf(kind)].progress_completed;
     }
 
-    fn submit(self: *JobPool, kind: Kind, fx: anytype, paths: []const []const u8, on_event: anytype, config: protocol.Config) !void {
-        if (self.stopped or paths.len == 0 or paths.len > max_jobs / 2) return error.InvalidBatch;
+    fn submit(
+        self: *JobPool,
+        kind: Kind,
+        fx: anytype,
+        paths: []const []const u8,
+        sources: []const protocol.Source,
+        on_event: anytype,
+        config: protocol.Config,
+        grouped: bool,
+    ) !void {
+        const count = if (grouped) sources.len else paths.len;
+        if (self.stopped or count == 0 or (grouped and count > max_batch_sources) or (!grouped and count > max_jobs / 2)) return error.InvalidBatch;
         const batch_index = indexOf(kind);
         self.mutex.lockUncancelable(self.io);
         const batch = &self.batches[batch_index];
@@ -187,7 +199,7 @@ pub const JobPool = struct {
             return error.BatchActive;
         }
         batch.generation +%= 1;
-        batch.submitted = paths.len;
+        batch.submitted = if (grouped) 1 else count;
         batch.completed = 0;
         batch.progress_completed = 0;
         batch.active = false;
@@ -212,11 +224,17 @@ pub const JobPool = struct {
             for (reserved[scheduled_count..reserved_count]) |job| self.releaseUnsubmitted(job);
             if (batch_started) self.cancel(kind, fx);
         }
-        for (paths, 0..) |path, root_index| {
-            if (path.len == 0 or path.len > 1024) return error.InvalidSource;
-            const job = try self.reserveJob(kind, generation, @intCast(root_index), path, config);
+        if (grouped) {
+            const job = try self.reserveBatchJob(kind, generation, sources, config);
             reserved[reserved_count] = job;
             reserved_count += 1;
+        } else {
+            for (paths, 0..) |path, root_index| {
+                if (path.len == 0 or path.len > 1024) return error.InvalidSource;
+                const job = try self.reserveJob(kind, generation, @intCast(root_index), path, config);
+                reserved[reserved_count] = job;
+                reserved_count += 1;
+            }
         }
 
         self.mutex.lockUncancelable(self.io);
@@ -237,17 +255,8 @@ pub const JobPool = struct {
     fn reserveJob(self: *JobPool, kind: Kind, generation: u64, root_index: u16, source: []const u8, config: protocol.Config) !*Job {
         const owned_source = try self.allocator.dupe(u8, source);
         errdefer self.allocator.free(owned_source);
-        var owned_config = config;
-        owned_config.path = &.{};
-        owned_config.suffix = &.{};
-        if (config.path.len != 0) {
-            owned_config.path = try self.allocator.dupe(u8, config.path);
-        }
-        errdefer if (owned_config.path.len != 0) self.allocator.free(owned_config.path);
-        if (config.suffix.len != 0) {
-            owned_config.suffix = try self.allocator.dupe(u8, config.suffix);
-        }
-        errdefer if (owned_config.suffix.len != 0) self.allocator.free(owned_config.suffix);
+        const owned_config = try self.duplicateConfig(config);
+        errdefer self.freeConfig(owned_config);
 
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -260,6 +269,7 @@ pub const JobPool = struct {
                 .root_index = root_index,
                 .kind = kind,
                 .source = owned_source,
+                .sources = null,
                 .config = owned_config,
                 .in_use = true,
             };
@@ -269,14 +279,95 @@ pub const JobPool = struct {
         return error.JobCapacityExceeded;
     }
 
+    fn reserveBatchJob(self: *JobPool, kind: Kind, generation: u64, sources: []const protocol.Source, config: protocol.Config) !*Job {
+        const owned_sources = try self.allocator.alloc(protocol.Source, sources.len);
+        var copied: usize = 0;
+        errdefer {
+            for (owned_sources[0..copied]) |source| {
+                self.allocator.free(source.path);
+                self.allocator.free(source.name);
+                self.allocator.free(source.root);
+            }
+            self.allocator.free(owned_sources);
+        }
+        for (sources) |source| {
+            if (source.path.len == 0 or source.path.len > 1024 or source.name.len == 0 or source.name.len > 1024 or source.root.len == 0 or source.root.len > 1024) return error.InvalidSource;
+            const path = try self.allocator.dupe(u8, source.path);
+            errdefer self.allocator.free(path);
+            const name = try self.allocator.dupe(u8, source.name);
+            errdefer self.allocator.free(name);
+            const root = try self.allocator.dupe(u8, source.root);
+            errdefer self.allocator.free(root);
+            owned_sources[copied] = .{
+                .path = path,
+                .name = name,
+                .root = root,
+                .kind = source.kind,
+                .page_index = source.page_index,
+            };
+            copied += 1;
+        }
+
+        const owned_config = try self.duplicateConfig(config);
+        errdefer self.freeConfig(owned_config);
+
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (&self.jobs) |*job| {
+            if (job.in_use) continue;
+            job.* = .{
+                .pool = self,
+                .id = self.next_id,
+                .generation = generation,
+                .root_index = 0,
+                .kind = kind,
+                .source = &.{},
+                .sources = owned_sources,
+                .config = owned_config,
+                .in_use = true,
+            };
+            self.next_id +%= 1;
+            return job;
+        }
+        return error.JobCapacityExceeded;
+    }
+
+    fn duplicateConfig(self: *JobPool, config: protocol.Config) !protocol.Config {
+        var owned = config;
+        owned.path = &.{};
+        owned.suffix = &.{};
+        if (config.path.len != 0) owned.path = try self.allocator.dupe(u8, config.path);
+        errdefer if (owned.path.len != 0) self.allocator.free(owned.path);
+        if (config.suffix.len != 0) owned.suffix = try self.allocator.dupe(u8, config.suffix);
+        return owned;
+    }
+
+    fn freeConfig(self: *JobPool, config: protocol.Config) void {
+        if (config.path.len != 0) self.allocator.free(config.path);
+        if (config.suffix.len != 0) self.allocator.free(config.suffix);
+    }
+
+    fn freeSources(self: *JobPool, sources: ?[]protocol.Source) void {
+        if (sources) |items| {
+            for (items) |source| {
+                self.allocator.free(source.path);
+                self.allocator.free(source.name);
+                self.allocator.free(source.root);
+            }
+            self.allocator.free(items);
+        }
+    }
+
     fn releaseUnsubmitted(self: *JobPool, job: *Job) void {
         self.mutex.lockUncancelable(self.io);
         const source = job.source;
+        const sources = job.sources;
         const path = job.config.path;
         const suffix = job.config.suffix;
         job.in_use = false;
         self.mutex.unlock(self.io);
-        self.allocator.free(source);
+        if (source.len != 0) self.allocator.free(source);
+        self.freeSources(sources);
         if (path.len != 0) self.allocator.free(path);
         if (suffix.len != 0) self.allocator.free(suffix);
     }
@@ -344,11 +435,13 @@ pub const JobPool = struct {
     fn finishJob(self: *JobPool, job: *Job) void {
         self.mutex.lockUncancelable(self.io);
         const source = job.source;
+        const sources = job.sources;
         const path = job.config.path;
         const suffix = job.config.suffix;
         job.in_use = false;
         self.mutex.unlock(self.io);
-        self.allocator.free(source);
+        if (source.len != 0) self.allocator.free(source);
+        self.freeSources(sources);
         if (path.len != 0) self.allocator.free(path);
         if (suffix.len != 0) self.allocator.free(suffix);
     }
@@ -392,7 +485,8 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
             pool.complete(job, .{ .inspect = response });
         },
         .process => {
-            const result = operations.process(pool.allocator, pool.io, job.config, job.source, .{
+            const sources = job.sources orelse unreachable;
+            const result = operations.processSources(pool.allocator, pool.io, job.config, sources, .{
                 .context = job,
                 .advance_fn = reportProgress,
             }) catch |err| {
@@ -495,8 +589,13 @@ test "job pool completes an image conversion before shutdown" {
     pool.init(allocator, std.testing.io);
     defer pool.deinit();
 
-    const paths = [_][]const u8{source};
-    try pool.submitProcessing(&fx, &paths, .{
+    const sources = [_]protocol.Source{.{
+        .path = source,
+        .name = "source.png",
+        .root = source,
+        .kind = .image,
+    }};
+    try pool.submitProcessingBatch(&fx, &sources, .{
         .mode = .path,
         .path = output_directory,
         .width = 1,
@@ -559,31 +658,36 @@ test "job pool drains a batch beyond semaphore parallelism" {
     defer pool.deinit();
 
     const count = pool.parallelism + 1;
-    var paths: [max_workers + 1][]const u8 = undefined;
+    var sources: [max_workers + 1]protocol.Source = undefined;
     var owned_paths: [max_workers + 1][]u8 = undefined;
     for (0..count) |index| {
         const file_name = try std.fmt.allocPrint(allocator, "source{d}.png", .{index});
         defer allocator.free(file_name);
         try tmp.dir.writeFile(std.testing.io, .{ .sub_path = file_name, .data = png });
         owned_paths[index] = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, file_name });
-        paths[index] = owned_paths[index];
+        sources[index] = .{
+            .path = owned_paths[index],
+            .name = std.fs.path.basename(owned_paths[index]),
+            .root = owned_paths[index],
+            .kind = .image,
+        };
     }
     defer for (owned_paths[0..count]) |path| allocator.free(path);
 
     const output_directory = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     defer allocator.free(output_directory);
-    try pool.submitProcessing(&fx, paths[0..count], .{
+    try pool.submitProcessingBatch(&fx, sources[0..count], .{
         .mode = .path,
         .path = output_directory,
         .width = 1,
         .quality = 80,
     }, TestEffects.channelMsg(.channel));
-    try std.testing.expectEqual(count, pool.batches[indexOf(.process)].submitted);
+    try std.testing.expectEqual(@as(usize, 1), pool.batches[indexOf(.process)].submitted);
     try std.testing.expect(pool.batches[indexOf(.process)].active);
 
     var delivered: usize = 0;
     var attempts: usize = 0;
-    while (delivered < count and attempts < 5000) : (attempts += 1) {
+    while (delivered < 1 and attempts < 5000) : (attempts += 1) {
         if (fx.takeMsg()) |message| {
             switch (message) {
                 .channel => |event| {
@@ -598,7 +702,7 @@ test "job pool drains a batch beyond semaphore parallelism" {
                         continue;
                     }
                     switch (completion.outcome) {
-                        .process => |*output| try std.testing.expectEqual(@as(usize, 1), output.values.items.len),
+                        .process => |*output| try std.testing.expectEqual(count, output.values.items.len),
                         else => return error.TestUnexpectedResult,
                     }
                     completion.deinit(allocator);
@@ -611,9 +715,9 @@ test "job pool drains a batch beyond semaphore parallelism" {
         }
     }
 
-    try std.testing.expectEqual(count, delivered);
+    try std.testing.expectEqual(@as(usize, 1), delivered);
     try std.testing.expectEqual(count, pool.progress(.process));
-    try std.testing.expectEqual(count, pool.batches[indexOf(.process)].completed);
+    try std.testing.expectEqual(@as(usize, 1), pool.batches[indexOf(.process)].completed);
     try std.testing.expect(!pool.batches[indexOf(.process)].active);
     try std.testing.expect(!pool.batches[indexOf(.process)].wake_armed);
     try std.testing.expectEqual(@as(usize, 0), pool.completion_count);

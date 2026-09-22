@@ -30,6 +30,27 @@ pub const Page = struct {
     height: u32,
 };
 
+pub const PageInputKind = enum { encoded, rgb };
+
+pub const PageInput = struct {
+    kind: PageInputKind,
+    bytes: []u8,
+    width: u32 = 0,
+    height: u32 = 0,
+
+    pub fn source(self: *const PageInput) image_batch.Source {
+        return switch (self.kind) {
+            .encoded => .{ .encoded = self.bytes },
+            .rgb => .{ .rgb = .{ .width = self.width, .height = self.height, .pixels = self.bytes } },
+        };
+    }
+
+    pub fn deinit(self: *PageInput, allocator: Allocator) void {
+        allocator.free(self.bytes);
+        self.* = undefined;
+    }
+};
+
 pub fn pageCount(alloc: Allocator, source: []const u8) !u32 {
     const source_z = try alloc.dupeZ(u8, source);
     defer alloc.free(source_z);
@@ -70,6 +91,47 @@ pub fn thumbnailBytes(alloc: Allocator, source: []const u8) !?[]u8 {
     if (images.len == 0) return null;
 
     return thumbnailImage(alloc, images[0]);
+}
+
+pub fn extractPage(alloc: Allocator, io: std.Io, source: []const u8, page_index: usize) !PageInput {
+    try io.checkCancel();
+    const source_z = try alloc.dupeZ(u8, source);
+    defer alloc.free(source_z);
+
+    const source_pdf = c.pdfioFileOpen(source_z.ptr, null, null, null, null) orelse return error.InvalidPdf;
+    defer _ = c.pdfioFileClose(source_pdf);
+
+    const page_count = c.pdfioFileGetNumPages(source_pdf);
+    if (page_index >= page_count) return error.InvalidPdfPage;
+
+    const images = try pageImages(alloc, source_pdf, page_index);
+    defer alloc.free(images);
+    if (images.len == 0) {
+        const page = c.pdfioFileGetPage(source_pdf, page_index) orelse return error.EmptyPdfPage;
+        var media_box: c.pdfio_rect_t = undefined;
+        if (c.pdfioPageGetRect(page, "MediaBox", &media_box) == null) return error.EmptyPdfPage;
+        const width: u32 = @intFromFloat(@max(@as(f64, 1), media_box.x2 - media_box.x1));
+        const height: u32 = @intFromFloat(@max(@as(f64, 1), media_box.y2 - media_box.y1));
+        const pixel_count = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch return error.PdfStreamTooLarge;
+        const byte_count = std.math.mul(usize, pixel_count, 3) catch return error.PdfStreamTooLarge;
+        const bytes = try alloc.alloc(u8, byte_count);
+        @memset(bytes, 255);
+        return .{ .kind = .rgb, .bytes = bytes, .width = width, .height = height };
+    }
+
+    const pdf_image = images[0];
+    switch (pdf_image.encoding) {
+        .jpeg => {
+            const bytes = try readEncodedImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
+            return .{ .kind = .encoded, .bytes = bytes };
+        },
+        .flate, .raw => {
+            var raw = try readFlateImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
+            const result = PageInput{ .kind = .rgb, .bytes = raw.pixels, .width = raw.width, .height = raw.height };
+            raw.pixels = &.{};
+            return result;
+        },
+    }
 }
 
 fn thumbnailImage(allocator: Allocator, pdf_image: ImageObject) !?[]u8 {
@@ -142,110 +204,6 @@ fn readFlateImage(allocator: std.mem.Allocator, pdf_image: ImageObject) !?RawIma
     return .{ .pixels = rgb, .width = pdf_image.width, .height = pdf_image.height };
 }
 
-pub fn toPdf(
-    alloc: Allocator,
-    io: std.Io,
-    sources: []const []const u8,
-    destination: []const u8,
-    config: protocol.Config,
-    progress: ?protocol.Progress,
-) !void {
-    if (sources.len == 0) return error.EmptyPdf;
-
-    const inputs = try alloc.alloc(image_batch.Source, sources.len);
-    defer alloc.free(inputs);
-    for (inputs, sources) |*input, source| input.* = .{ .file = source };
-
-    const results = try image_batch.process(alloc, io, inputs, config, progress);
-    defer image_batch.freeResults(alloc, results);
-
-    const pages = try alloc.alloc(Page, results.len);
-    defer alloc.free(pages);
-    for (pages, results) |*page, result| {
-        page.* = .{ .bytes = result.bytes, .width = result.width, .height = result.height };
-    }
-
-    const output = try createPdf(alloc, pages);
-    defer alloc.free(output);
-
-    try storage.writeAtomic(io, destination, output);
-}
-
-pub fn toPdfFromFile(
-    alloc: Allocator,
-    io: std.Io,
-    source: []const u8,
-    destination: []const u8,
-    config: protocol.Config,
-    progress: ?protocol.Progress,
-) !void {
-    const source_z = try alloc.dupeZ(u8, source);
-    defer alloc.free(source_z);
-
-    const source_pdf = c.pdfioFileOpen(source_z.ptr, null, null, null, null) orelse return error.InvalidPdf;
-    var source_open = true;
-    defer {
-        if (source_open) _ = c.pdfioFileClose(source_pdf);
-    }
-
-    var extracted = std.ArrayList(ExtractedImage).empty;
-    defer {
-        for (extracted.items) |item| alloc.free(item.bytes);
-        extracted.deinit(alloc);
-    }
-    var inputs = std.ArrayList(image_batch.Source).empty;
-    defer inputs.deinit(alloc);
-
-    const page_count = c.pdfioFileGetNumPages(source_pdf);
-    for (0..page_count) |page_index| {
-        try io.checkCancel();
-        const images = try pageImages(alloc, source_pdf, page_index);
-        defer alloc.free(images);
-
-        for (images) |pdf_image| {
-            switch (pdf_image.encoding) {
-                .jpeg => {
-                    const bytes = try readEncodedImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
-                    const index = extracted.items.len;
-                    extracted.append(alloc, .{ .kind = .encoded, .bytes = bytes, .width = 0, .height = 0 }) catch |err| {
-                        alloc.free(bytes);
-                        return err;
-                    };
-                    inputs.append(alloc, extracted.items[index].source()) catch |err| return err;
-                },
-                .flate, .raw => {
-                    var raw = try readFlateImage(alloc, pdf_image) orelse return error.PdfImageReadFailed;
-                    const index = extracted.items.len;
-                    extracted.append(alloc, .{ .kind = .rgb, .bytes = raw.pixels, .width = raw.width, .height = raw.height }) catch |err| {
-                        raw.deinit(alloc);
-                        return err;
-                    };
-                    raw.pixels = &.{};
-                    inputs.append(alloc, extracted.items[index].source()) catch |err| return err;
-                },
-            }
-        }
-    }
-
-    if (inputs.items.len == 0) return error.EmptyPdf;
-
-    if (!c.pdfioFileClose(source_pdf)) return error.InvalidPdf;
-    source_open = false;
-
-    const results = try image_batch.process(alloc, io, inputs.items, config, progress);
-    defer image_batch.freeResults(alloc, results);
-
-    const pages = try alloc.alloc(Page, results.len);
-    defer alloc.free(pages);
-    for (pages, results) |*page, result| {
-        page.* = .{ .bytes = result.bytes, .width = result.width, .height = result.height };
-    }
-
-    const output = try createPdf(alloc, pages);
-    defer alloc.free(output);
-    try storage.writeAtomic(io, destination, output);
-}
-
 pub fn createFromJpegs(alloc: Allocator, io: std.Io, pages: []const Page, destination: []const u8) !void {
     const output = try createPdf(alloc, pages);
     defer alloc.free(output);
@@ -273,20 +231,6 @@ const RawImage = struct {
     fn deinit(self: *RawImage, alloc: Allocator) void {
         alloc.free(self.pixels);
         self.* = undefined;
-    }
-};
-
-const ExtractedImage = struct {
-    kind: enum { encoded, rgb },
-    bytes: []u8,
-    width: u32,
-    height: u32,
-
-    fn source(self: *const ExtractedImage) image_batch.Source {
-        return switch (self.kind) {
-            .encoded => .{ .encoded = self.bytes },
-            .rgb => .{ .rgb = .{ .width = self.width, .height = self.height, .pixels = self.bytes } },
-        };
     }
 };
 

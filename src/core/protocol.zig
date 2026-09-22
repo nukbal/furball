@@ -4,6 +4,14 @@ pub const Mode = enum { path, overwrite };
 pub const DirMode = enum { none, pdf, zip };
 pub const Kind = enum { image, video, pdf, zip, directory, archive_file };
 
+pub const Source = struct {
+    path: []const u8,
+    name: []const u8,
+    root: []const u8,
+    kind: Kind,
+    page_index: ?u32 = null,
+};
+
 pub const max_thumbnail_blob_bytes: usize = 192 * 1024;
 pub const max_thumbnail_blob_base64_bytes: usize = 256 * 1024;
 

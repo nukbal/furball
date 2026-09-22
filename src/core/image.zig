@@ -489,7 +489,7 @@ test "png decode resize and mozjpeg encode complete" {
     defer alloc.free(input);
 
     try std.base64.standard.Decoder.decode(input, encoded);
-    const output = try encodeBytesFromMemory(std.testing.allocator, std.testing.io, input, .{ .width = 12, .quality = 88, .ai = false }, null);
+    const output = try encodeBytesFromMemory(std.testing.allocator, std.testing.io, input, .{ .width = 12, .quality = 88, .ai = false });
     defer alloc.free(output);
 
     try std.testing.expect(output.len > 2);

@@ -8,6 +8,7 @@ const canvas = native_sdk.canvas;
 pub const max_paths: usize = 64;
 pub const max_path_bytes: usize = 1024;
 pub const max_items: usize = 256;
+pub const max_process_sources: usize = jobs.max_batch_sources;
 pub const max_name_bytes: usize = 256;
 pub const max_metadata_bytes: usize = 160;
 pub const max_error_bytes: usize = 512;
@@ -50,6 +51,11 @@ pub const Item = struct {
     pub fn metadata(item: *const Item) []const u8 {
         return item.metadata_storage[0..item.metadata_len];
     }
+};
+
+const ProcessRef = struct {
+    item_index: u16,
+    page_index: ?u32 = null,
 };
 
 pub const Dialog = enum { none, files, output };
@@ -128,8 +134,9 @@ pub const Model = struct {
     inspect_completed: usize = 0,
     process_completed: usize = 0,
     process_total: usize = 0,
-    process_roots_completed: usize = 0,
-    process_last_root: usize = 0,
+    process_jobs_completed: usize = 0,
+    process_sources: [max_process_sources]ProcessRef = undefined,
+    process_source_count: usize = 0,
     inspecting: bool = false,
     processing: bool = false,
     inspect_cancel_pending: bool = false,
@@ -200,7 +207,7 @@ pub const Model = struct {
             total_count += if (item.count == 0) 1 else item.count;
         }
         if (model.item_count > 0 and model.items[0].kind == .pdf) {
-          return std.fmt.allocPrint(arena, "{d} 페이지", .{total_count}) catch "항목 정보";
+            return std.fmt.allocPrint(arena, "{d} 페이지", .{total_count}) catch "항목 정보";
         }
         return std.fmt.allocPrint(arena, "{d}개 항목", .{total_count}) catch "항목 정보";
     }
@@ -221,7 +228,8 @@ pub const Model = struct {
         return std.fmt.allocPrint(arena, "품질 {d}", .{model.config.quality}) catch "품질";
     }
     pub fn qualityAccessibility(model: *const Model) []const u8 {
-        return model.qualityLabel();
+        _ = model;
+        return "품질";
     }
     pub fn aiEnabled(model: *const Model) bool {
         return model.config.ai;
@@ -271,17 +279,17 @@ pub const Model = struct {
     }
 
     pub fn preview(model: *const Model, arena: std.mem.Allocator) []const Item {
-      if (model.item_count == 0) return &.{};
-      const res = arena.alloc(Item, 1) catch return &.{};
-      @memcpy(res, model.items[0..1]);
-      return res;
+        if (model.item_count == 0) return &.{};
+        const res = arena.alloc(Item, 1) catch return &.{};
+        @memcpy(res, model.items[0..1]);
+        return res;
     }
 
     pub fn visible(model: *const Model, arena: std.mem.Allocator) []const Item {
-      if (model.item_count < 2) return &.{};
-      const result = arena.alloc(Item, model.item_count - 1) catch return &.{};
-      @memcpy(result, model.items[1..model.item_count]);
-      return result;
+        if (model.item_count < 2) return &.{};
+        const result = arena.alloc(Item, model.item_count - 1) catch return &.{};
+        @memcpy(result, model.items[1..model.item_count]);
+        return result;
     }
 
     pub fn initPaths(model: *Model, io: std.Io, environ_map: *std.process.Environ.Map) void {
@@ -403,8 +411,11 @@ pub const Model = struct {
         return true;
     }
 
-    fn unregisterItem(_: *Model, item: *const Item, fx: *Effects) void {
-        if (item.thumbnail_id != 0) fx.cancel(item.thumbnail_id);
+    fn unregisterItem(model: *Model, item: *const Item, fx: *Effects) void {
+        if (item.thumbnail_id != 0) {
+            fx.cancel(item.thumbnail_id);
+            if (model.thumbnail_pending != 0) model.thumbnail_pending -= 1;
+        }
         if (item.image_id != 0) _ = fx.unregisterImage(item.image_id);
     }
 
@@ -417,8 +428,8 @@ pub const Model = struct {
         model.inspect_completed = 0;
         model.process_completed = 0;
         model.process_total = 0;
-        model.process_roots_completed = 0;
-        model.process_last_root = 0;
+        model.process_jobs_completed = 0;
+        model.process_source_count = 0;
         model.output_count = 0;
         model.output_last_len = 0;
         model.thumbnail_pending = 0;
@@ -434,11 +445,34 @@ pub const Model = struct {
         return true;
     }
 
+    fn pathLooksPdf(path: []const u8) bool {
+        return std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".pdf");
+    }
+
+    fn dialogHasPdf(model: *const Model) bool {
+        var start: usize = 0;
+        for (model.dialog_buffer[0..model.dialog_len], 0..) |byte, index| {
+            if (byte != '\n') continue;
+            if (pathLooksPdf(model.dialog_buffer[start..index])) return true;
+            start = index + 1;
+        }
+        return start < model.dialog_len and pathLooksPdf(model.dialog_buffer[start..model.dialog_len]);
+    }
+
+    fn pathsHavePdf(paths: []const []const u8) bool {
+        for (paths) |path| if (pathLooksPdf(path)) return true;
+        return false;
+    }
+
     fn addPath(model: *Model, path: []const u8, fx: *Effects) void {
         _ = fx;
         if (model.isProcessing() or path.len == 0 or path.len > max_path_bytes or model.root_count >= max_paths) return;
         for (model.items[0..model.item_count]) |item| {
             if (item.depth == 0 and std.mem.eql(u8, item.path(), path)) return;
+            if (item.depth == 0 and (pathLooksPdf(path) or pathLooksPdf(item.path()))) {
+                model.setError("PDF는 한 번에 하나만 선택할 수 있습니다");
+                return;
+            }
         }
         const root_index: u16 = @intCast(model.root_count);
         if (model.item_count >= model.items.len) return;
@@ -479,6 +513,11 @@ pub const Model = struct {
             model.dialog = .none;
             return;
         }
+        if (model.dialog_count > 1 and model.dialogHasPdf() and !model.isProcessing()) {
+            model.dialog = .none;
+            model.setError("PDF는 한 번에 하나만 선택할 수 있습니다");
+            return;
+        }
         if (!model.prepareForLoad(fx)) {
             model.dialog = .none;
             return;
@@ -509,15 +548,49 @@ pub const Model = struct {
         return count;
     }
 
-    fn processTargetTotal(model: *const Model) usize {
-        var total: usize = 0;
-        for (model.items[0..model.item_count]) |item| {
+    fn appendProcessSource(model: *Model, item_index: usize, page_index: ?u32) !void {
+        if (model.process_source_count >= model.process_sources.len) return error.TooManyProcessSources;
+        model.process_sources[model.process_source_count] = .{
+            .item_index = @intCast(item_index),
+            .page_index = page_index,
+        };
+        model.process_source_count += 1;
+    }
+
+    fn buildProcessSources(model: *Model) !void {
+        model.process_source_count = 0;
+        for (model.items[0..model.item_count], 0..) |item, item_index| {
             if (item.depth != 0) continue;
-            const count: usize = switch (item.kind) {
-                .directory, .pdf, .zip => @intCast(item.count),
+            if (item.kind == .pdf and model.root_count != 1) return error.PdfBatchNotAllowed;
+
+            switch (item.kind) {
+                .directory => {
+                    for (model.items[0..model.item_count], 0..) |child, child_index| {
+                        if (child.depth != 0 and child.root_index == item.root_index and child.kind == .image) {
+                            try model.appendProcessSource(child_index, null);
+                        }
+                    }
+                },
+                .pdf => {
+                    for (0..item.count) |page_index| {
+                        try model.appendProcessSource(item_index, @intCast(page_index));
+                    }
+                },
+                else => try model.appendProcessSource(item_index, null),
+            }
+        }
+        if (model.process_source_count == 0) return error.NoProcessableFiles;
+    }
+
+    fn processTargetTotal(model: *const Model) usize {
+        if (model.process_source_count == 0) return 0;
+        var total: usize = 0;
+        for (model.process_sources[0..model.process_source_count]) |source| {
+            const item = model.items[source.item_index];
+            total +|= if (source.page_index != null) 1 else switch (item.kind) {
+                .zip => @max(@as(usize, 1), @as(usize, @intCast(item.count))),
                 else => 1,
             };
-            total +|= count;
         }
         return total;
     }
@@ -572,15 +645,43 @@ pub const Model = struct {
         return model.item_count;
     }
 
+    fn processSource(model: *const Model, source: ProcessRef, page_name: []u8) !protocol.Source {
+        const item = &model.items[source.item_index];
+        const root_index = model.rootItemIndex(item.root_index);
+        if (root_index >= model.item_count) return error.InvalidSource;
+        const root = model.items[root_index].path();
+        const name = if (source.page_index) |page_index|
+            try std.fmt.bufPrint(page_name, "{d}", .{page_index + 1})
+        else if (item.depth != 0 and std.mem.startsWith(u8, item.path(), root) and item.path().len > root.len and item.path()[root.len] == std.fs.path.sep)
+            item.path()[root.len + 1 ..]
+        else
+            item.name();
+
+        return .{
+            .path = item.path(),
+            .name = name,
+            .root = root,
+            .kind = item.kind,
+            .page_index = source.page_index,
+        };
+    }
+
     fn submitProcessing(model: *Model, fx: *Effects) void {
         const pool = model.job_pool orelse {
             model.processing = false;
             model.setError("변환에 실패했습니다");
             return;
         };
-        var paths: [max_paths][]const u8 = undefined;
-        const count = model.rootPaths(&paths);
-        pool.submitProcessing(fx, paths[0..count], model.configValue(), Effects.channelMsg(.job_event)) catch {
+        var sources: [max_process_sources]protocol.Source = undefined;
+        var page_names: [max_process_sources][max_name_bytes]u8 = undefined;
+        for (model.process_sources[0..model.process_source_count], 0..) |source, index| {
+            sources[index] = model.processSource(source, &page_names[index]) catch {
+                model.processing = false;
+                model.setError("변환할 파일 목록을 만들 수 없습니다");
+                return;
+            };
+        }
+        pool.submitProcessingBatch(fx, sources[0..model.process_source_count], model.configValue(), Effects.channelMsg(.job_event)) catch {
             model.processing = false;
             model.setError("변환에 실패했습니다");
         };
@@ -698,15 +799,12 @@ pub const Model = struct {
                 model.inspect_completed += 1;
             },
             .process => |result| {
-                model.process_roots_completed += 1;
+                model.process_jobs_completed += 1;
                 if (result.values.items.len == 0) {
                     model.setError("변환된 파일이 없습니다");
                 } else {
                     model.output_count = @min(max_output_paths, model.output_count + result.values.items.len);
-                    if (root_index >= model.process_last_root) {
-                        model.process_last_root = root_index;
-                        copyPath(&model.output_last_storage, &model.output_last_len, result.values.items[result.values.items.len - 1]);
-                    }
+                    copyPath(&model.output_last_storage, &model.output_last_len, result.values.items[result.values.items.len - 1]);
                 }
             },
             .failed => {
@@ -714,7 +812,7 @@ pub const Model = struct {
                     model.inspectFailure(root_index, jobError(.inspect));
                     model.inspect_completed += 1;
                 } else {
-                    model.process_roots_completed += 1;
+                    model.process_jobs_completed += 1;
                     model.setError(jobError(.process));
                 }
             },
@@ -761,7 +859,7 @@ pub const Model = struct {
             model.inspecting = false;
             if (!model.hasError()) setStatus(model, "파일을 준비했습니다");
         }
-        if (kind == .process and model.process_roots_completed >= model.root_count) {
+        if (kind == .process and model.process_jobs_completed >= 1) {
             model.processing = false;
             if (!model.hasError()) setStatus(model, "변환을 완료했습니다");
         }
@@ -808,11 +906,18 @@ pub const Model = struct {
             },
             .process => {
                 if (!model.canProcess()) return;
+                model.buildProcessSources() catch |err| {
+                    model.setError(switch (err) {
+                        error.PdfBatchNotAllowed => "PDF는 다른 파일과 함께 처리할 수 없습니다",
+                        error.TooManyProcessSources => "처리할 파일이 너무 많습니다",
+                        else => "변환할 파일이 없습니다",
+                    });
+                    return;
+                };
                 model.processing = true;
                 model.process_completed = 0;
                 model.process_total = model.processTargetTotal();
-                model.process_roots_completed = 0;
-                model.process_last_root = 0;
+                model.process_jobs_completed = 0;
                 model.output_count = 0;
                 model.output_last_len = 0;
                 setStatus(model, "변환 중입니다...");
@@ -827,6 +932,11 @@ pub const Model = struct {
             },
             .dialog_cancelled => model.dialog = .none,
             .dropped => |drop| {
+                if (model.isProcessing()) return;
+                if (drop.paths.len > 1 and Model.pathsHavePdf(drop.paths)) {
+                    model.setError("PDF는 한 번에 하나만 선택할 수 있습니다");
+                    return;
+                }
                 if (!model.prepareForLoad(fx)) return;
                 for (drop.paths) |path| model.addPath(path, fx);
                 model.startInspection(fx);

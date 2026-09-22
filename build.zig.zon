@@ -29,8 +29,8 @@
             .hash = "N-V-__8AAL3jggBhdzIMaG_ZK89ecfojCQpxPYYgZAQt6bp9",
         },
         .ncnn = .{
-            .url = "git+https://github.com/Tencent/ncnn.git#305837fd4a722ebc47c5d72e72d8ec9ae970e932",
-            .hash = "N-V-__8AAAucxAJxOnskCHATKT-DclBP9NQOMZli1b0GGY0o",
+            .url = "git+https://github.com/Tencent/ncnn.git?ref=20260526#e54f7b1f88434e1d844ea0551b880a1cfb079ce1",
+            .hash = "N-V-__8AALKvRQPQZh-tMfiwXCUbzXttvaFe7FprqDp2ENky",
         },
         .libwebp = .{
             .url = "git+https://github.com/webmproject/libwebp.git?ref=v1.6.0#4fa21912338357f89e4fd51cf2368325b59e9bd9",

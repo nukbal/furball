@@ -8,7 +8,6 @@ const sort = @import("sort.zig");
 const paths = @import("paths.zig");
 const pdf = @import("pdf.zig");
 const protocol = @import("protocol.zig");
-const realesrgan = @import("realesrgan.zig");
 const storage = @import("storage.zig");
 const video = @import("video.zig");
 const zip = @import("zip.zig");
@@ -61,14 +60,11 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
                 result.size += child.size;
             }
 
-            for (result.children) |child| {
-                if (child.thumbnail) |thumbnail| {
+            if (firstImageNode(result.children)) |first| {
+                if (first.thumbnail) |thumbnail| {
                     result.thumbnail = try allocator.dupe(u8, thumbnail);
-                    break;
-                }
-                if (child.thumbnail_blob) |blob| {
+                } else if (first.thumbnail_blob) |blob| {
                     result.thumbnail_blob = try allocator.dupe(u8, blob);
-                    break;
                 }
             }
         },
@@ -77,7 +73,7 @@ fn inspectNode(allocator: Allocator, io: std.Io, source: []const u8, depth: usiz
             result.thumbnail = try allocator.dupe(u8, source);
         },
         .pdf => {
-            result.count = pdf.imageCount(allocator, source) catch return error.InvalidPdf;
+            result.count = pdf.pageCount(allocator, source) catch return error.InvalidPdf;
             if (try pdf.thumbnailBytes(allocator, source)) |thumbnail| {
                 defer allocator.free(thumbnail);
                 result.thumbnail_blob = try encodeThumbnail(allocator, thumbnail);
@@ -161,6 +157,22 @@ fn imageCount(node: protocol.InspectNode) u32 {
     return count;
 }
 
+fn firstImageNode(nodes: []const protocol.InspectNode) ?*const protocol.InspectNode {
+    var first: ?*const protocol.InspectNode = null;
+    for (nodes) |*node| {
+        var candidate: ?*const protocol.InspectNode = null;
+        if (node.kind == .image) {
+            candidate = node;
+        } else if (node.kind == .directory) {
+            candidate = firstImageNode(node.children);
+        }
+        if (candidate) |image_node| {
+            if (first == null or sort.compare(image_node.path, first.?.path) == .lt) first = image_node;
+        }
+    }
+    return first;
+}
+
 fn archiveChildren(allocator: Allocator, source: []const u8, parsed: *const zip.Archive) ![]protocol.InspectNode {
     const indices = try parsed.sortedIndices(allocator);
     defer allocator.free(indices);
@@ -237,161 +249,246 @@ pub fn process(
 
     if (stat.kind == .sym_link) return error.UnsupportedSymlink;
 
-    var outputs = OutputList{ .allocator = allocator };
-    errdefer outputs.deinit();
+    const file_kind = try kind.classifyPath(io, source, stat);
+    var sources = std.ArrayList(protocol.Source).empty;
+    defer sources.deinit(allocator);
+    var page_names = std.ArrayList([]u8).empty;
+    defer {
+        for (page_names.items) |name| allocator.free(name);
+        page_names.deinit(allocator);
+    }
+    var directory_entries: ?EntryList = null;
+    defer if (directory_entries) |*entries| entries.deinit(allocator);
 
-    switch (try kind.classifyPath(io, source, stat)) {
-        .image => try processImage(allocator, io, source, config, &outputs, progress),
-        .video => try processVideo(allocator, io, source, config, &outputs, progress),
-        .directory => try processDirectory(allocator, io, source, config, &outputs, progress),
-        .zip => try processZip(allocator, io, source, config, &outputs, progress),
-        .pdf => try processPdf(allocator, io, source, config, &outputs, progress),
-        .archive_file => return error.UnsupportedSource,
+    switch (file_kind) {
+        .directory => {
+            directory_entries = try collectDirectory(allocator, io, source);
+            const entries = &directory_entries.?;
+            std.mem.sort(archive.FileEntry, entries.items, {}, lessFileEntry);
+            for (entries.items) |entry| {
+                try sources.append(allocator, .{
+                    .path = entry.source,
+                    .name = entry.relative,
+                    .root = source,
+                    .kind = .image,
+                });
+            }
+            if (sources.items.len == 0) return error.EmptyDirectory;
+        },
+        .pdf => {
+            const page_count = try pdf.pageCount(allocator, source);
+            if (page_count == 0) return error.EmptyPdf;
+            for (0..page_count) |page_index| {
+                const name = try std.fmt.allocPrint(allocator, "{d}", .{page_index + 1});
+                page_names.append(allocator, name) catch |err| {
+                    allocator.free(name);
+                    return err;
+                };
+                try sources.append(allocator, .{
+                    .path = source,
+                    .name = name,
+                    .root = source,
+                    .kind = .pdf,
+                    .page_index = @intCast(page_index),
+                });
+            }
+        },
+        else => try sources.append(allocator, .{
+            .path = source,
+            .name = std.fs.path.basename(source),
+            .root = source,
+            .kind = file_kind,
+        }),
     }
 
-    if (outputs.values.items.len == 0) return error.NoProcessableFiles;
-
-    return outputs;
+    return processSources(allocator, io, config, sources.items, progress);
 }
 
-fn processImage(
-    allocator: Allocator,
-    io: std.Io,
-    source: []const u8,
-    config: protocol.Config,
-    outputs: *OutputList,
-    progress: ?protocol.Progress,
-) !void {
-    const destination = try target(allocator, io, source, config, "jpg");
-    defer allocator.free(destination);
+const ImageInput = struct {
+    metadata: protocol.Source,
+    source: image_batch.Source,
+    owned: ?[]u8 = null,
 
-    try convertImage(allocator, io, source, destination, config);
-
-    try appendOutput(allocator, outputs, destination);
-    if (progress) |reporter| reporter.advance();
-}
-
-fn processPdf(
-    allocator: Allocator,
-    io: std.Io,
-    source: []const u8,
-    config: protocol.Config,
-    outputs: *OutputList,
-    progress: ?protocol.Progress,
-) !void {
-    const destination = try target(allocator, io, source, config, "pdf");
-    defer allocator.free(destination);
-
-    try pdf.toPdfFromFile(allocator, io, source, destination, config, progress);
-    try appendOutput(allocator, outputs, destination);
-}
-
-fn convertImage(alloc: Allocator, io: std.Io, source: []const u8, destination: []const u8, config: protocol.Config) !void {
-    const bytes = try image.encodeBytes(alloc, io, source, config, 0);
-    defer alloc.free(bytes);
-
-    try storage.writeAtomic(io, destination, bytes);
-}
-
-const max_parallel_images: usize = 8;
-
-const ImageTask = struct {
-    allocator: Allocator,
-    io: std.Io,
-    source: []const u8,
-    destination: []const u8,
-    config: protocol.Config,
-    failure: ?anyerror = null,
-
-    fn run(task: *ImageTask) std.Io.Cancelable!void {
-        convertImage(task.allocator, task.io, task.source, task.destination, task.config) catch |err| {
-            task.failure = err;
-            if (err == error.Canceled) return error.Canceled;
-            return;
-        };
+    fn deinit(self: *ImageInput, allocator: Allocator) void {
+        if (self.owned) |bytes| allocator.free(bytes);
+        self.* = undefined;
     }
 };
 
-fn processImagesInParallel(
+pub fn processSources(
     allocator: Allocator,
     io: std.Io,
-    entries: []const archive.FileEntry,
     config: protocol.Config,
+    sources: []const protocol.Source,
+    progress: ?protocol.Progress,
+) !OutputList {
+    try protocol.validateConfig(config);
+    if (sources.len == 0) return error.InvalidBatch;
+
+    var outputs = OutputList{ .allocator = allocator };
+    errdefer outputs.deinit();
+
+    var images = std.ArrayList(ImageInput).empty;
+    defer {
+        for (images.items) |*input| input.deinit(allocator);
+        images.deinit(allocator);
+    }
+    var other_sources = std.ArrayList(protocol.Source).empty;
+    defer other_sources.deinit(allocator);
+
+    var pdf_root: ?[]const u8 = null;
+    for (sources) |source| {
+        if (source.kind != .pdf) continue;
+        if (source.page_index == null) return error.InvalidPdfPage;
+        if (pdf_root) |root| {
+            if (!std.mem.eql(u8, root, source.root)) return error.PdfBatchNotAllowed;
+        } else {
+            pdf_root = source.root;
+        }
+    }
+    if (pdf_root != null) {
+        for (sources) |source| if (source.kind != .pdf) return error.PdfBatchNotAllowed;
+    }
+
+    for (sources) |source| {
+        if (source.path.len == 0 or source.name.len == 0 or source.root.len == 0) return error.InvalidSource;
+        switch (source.kind) {
+            .image, .pdf => try appendImageInput(allocator, io, source, &images),
+            else => try other_sources.append(allocator, source),
+        }
+    }
+
+    const has_pdf_page = pdf_root != null;
+
+    if (images.items.len != 0) {
+        const grouped = config.dir_mode != .none and (images.items.len > 1 or has_pdf_page);
+        if (grouped) {
+            try processImageBatch(allocator, io, config, images.items, &outputs, progress);
+        } else {
+            for (images.items) |input| try processImageInput(allocator, io, config, input, &outputs, progress);
+        }
+    }
+
+    for (other_sources.items) |source| {
+        switch (source.kind) {
+            .video => try processVideo(allocator, io, source.path, config, &outputs, progress),
+            .zip => try processZip(allocator, io, source.path, config, &outputs, progress),
+            else => return error.UnsupportedSource,
+        }
+    }
+
+    if (outputs.values.items.len == 0) return error.NoProcessableFiles;
+    return outputs;
+}
+
+fn appendImageInput(
+    allocator: Allocator,
+    io: std.Io,
+    source: protocol.Source,
+    inputs: *std.ArrayList(ImageInput),
+) !void {
+    if (source.kind == .image) {
+        try inputs.append(allocator, .{ .metadata = source, .source = .{ .file = source.path } });
+        return;
+    }
+
+    const page_index = source.page_index orelse return error.InvalidPdfPage;
+    var page = try pdf.extractPage(allocator, io, source.path, page_index);
+    const input = ImageInput{ .metadata = source, .source = page.source(), .owned = page.bytes };
+    page.bytes = &.{};
+    inputs.append(allocator, input) catch |err| {
+        allocator.free(input.owned.?);
+        return err;
+    };
+}
+
+fn processImageInput(
+    allocator: Allocator,
+    io: std.Io,
+    config: protocol.Config,
+    input: ImageInput,
     outputs: *OutputList,
     progress: ?protocol.Progress,
 ) !void {
-    var tasks = std.ArrayList(ImageTask).empty;
-    defer {
-        for (tasks.items) |task| allocator.free(task.destination);
-        tasks.deinit(allocator);
-    }
+    const sources = [_]image_batch.Source{input.source};
+    const results = try image_batch.process(allocator, io, &sources, config, progress);
+    defer image_batch.freeResults(allocator, results);
 
-    for (entries) |entry| {
-        if (entry.kind != .image) continue;
-
-        const destination = try targetForBatch(allocator, io, entry.source, config, "jpg", tasks.items);
-        tasks.append(allocator, .{
-            .allocator = allocator,
-            .io = io,
-            .source = entry.source,
-            .destination = destination,
-            .config = config,
-        }) catch |err| {
-            allocator.free(destination);
-            return err;
-        };
-    }
-
-    if (tasks.items.len == 0) return;
-
-    const worker_count = @max(@as(usize, 1), @min(std.Thread.getCpuCount() catch 1, max_parallel_images));
-    var first = @as(usize, 0);
-    while (first < tasks.items.len) {
-        const last = @min(tasks.items.len, first + worker_count);
-        var group: std.Io.Group = .init;
-        for (tasks.items[first..last]) |*task| {
-            group.concurrent(io, ImageTask.run, .{task}) catch |err| {
-                group.cancel(io);
-                return err;
-            };
-        }
-        group.await(io) catch |err| {
-            group.cancel(io);
-            return err;
-        };
-        for (tasks.items[first..last]) |task| {
-            if (task.failure) |err| return err;
-            if (progress) |reporter| reporter.advance();
-        }
-        first = last;
-    }
-
-    for (tasks.items) |task| try appendOutput(allocator, outputs, task.destination);
+    const destination = try targetForSource(allocator, io, input.metadata, config, "jpg", outputs.values.items);
+    defer allocator.free(destination);
+    try storage.writeAtomic(io, destination, results[0].bytes);
+    try appendOutput(allocator, outputs, destination);
 }
 
-fn targetForBatch(
+fn processImageBatch(
     allocator: Allocator,
     io: std.Io,
-    source: []const u8,
+    config: protocol.Config,
+    inputs: []const ImageInput,
+    outputs: *OutputList,
+    progress: ?protocol.Progress,
+) !void {
+    const sources = try allocator.alloc(image_batch.Source, inputs.len);
+    defer allocator.free(sources);
+    const names = try allocator.alloc([]const u8, inputs.len);
+    defer allocator.free(names);
+    for (sources, names, inputs) |*source, *name, input| {
+        source.* = input.source;
+        name.* = input.metadata.name;
+    }
+
+    const results = try image_batch.process(allocator, io, sources, config, progress);
+    defer image_batch.freeResults(allocator, results);
+
+    const root = inputs[0].metadata.root;
+    const extension = if (config.dir_mode == .pdf) "pdf" else "zip";
+    const destination = try target(allocator, io, root, config, extension);
+    defer allocator.free(destination);
+
+    if (config.dir_mode == .pdf) {
+        const pages = try allocator.alloc(pdf.Page, results.len);
+        defer allocator.free(pages);
+        for (pages, results) |*page, result| {
+            page.* = .{ .bytes = result.bytes, .width = result.width, .height = result.height };
+        }
+        try pdf.createFromJpegs(allocator, io, pages, destination);
+    } else {
+        try archive.createZipFromResults(allocator, io, names, results, config.suffix, destination);
+    }
+
+    try appendOutput(allocator, outputs, destination);
+}
+
+fn targetForSource(
+    allocator: Allocator,
+    io: std.Io,
+    source: protocol.Source,
     config: protocol.Config,
     extension: []const u8,
-    tasks: []const ImageTask,
+    used: []const []const u8,
 ) ![]u8 {
-    const directory = try paths.outputDirectory(allocator, config, source);
+    const directory = try paths.outputDirectory(allocator, config, source.root);
     defer allocator.free(directory);
     try paths.requireOutputDirectory(io, directory);
 
+    const stem = std.fs.path.stem(std.fs.path.basename(source.name));
+    if (stem.len == 0) return error.InvalidSourceName;
+
     var collision: usize = 0;
     while (true) : (collision += 1) {
-        const candidate = try paths.outputPath(allocator, config, source, extension, collision);
-        if (!containsDestination(tasks, candidate) and (config.mode == .overwrite or !paths.exists(io, candidate))) return candidate;
+        const suffix = if (collision == 0) "" else try std.fmt.allocPrint(allocator, " ({d})", .{collision});
+        defer if (collision != 0) allocator.free(suffix);
+        const filename = try std.fmt.allocPrint(allocator, "{s}{s}{s}.{s}", .{ stem, config.suffix, suffix, extension });
+        defer allocator.free(filename);
+        const candidate = try std.fs.path.join(allocator, &.{ directory, filename });
+        if ((config.mode == .overwrite or (!paths.exists(io, candidate) and !containsOutput(used, candidate)))) return candidate;
         allocator.free(candidate);
         if (collision >= 100_000) return error.TooManyCollisions;
     }
 }
 
-fn containsDestination(tasks: []const ImageTask, candidate: []const u8) bool {
-    for (tasks) |task| if (std.mem.eql(u8, task.destination, candidate)) return true;
+fn containsOutput(outputs: []const []const u8, candidate: []const u8) bool {
+    for (outputs) |output| if (std.mem.eql(u8, output, candidate)) return true;
     return false;
 }
 
@@ -454,43 +551,6 @@ fn processZip(
     const destination = try target(allocator, io, source, config, "pdf");
     defer allocator.free(destination);
     try pdf.createFromJpegs(allocator, io, pages, destination);
-    try appendOutput(allocator, outputs, destination);
-}
-
-fn processDirectory(
-    allocator: Allocator,
-    io: std.Io,
-    source: []const u8,
-    config: protocol.Config,
-    outputs: *OutputList,
-    progress: ?protocol.Progress,
-) !void {
-    var entries = try collectDirectory(allocator, io, source);
-    defer entries.deinit(allocator);
-
-    std.mem.sort(archive.FileEntry, entries.items, {}, lessFileEntry);
-
-    if (config.dir_mode == .none) {
-        try processImagesInParallel(allocator, io, entries.items, config, outputs, progress);
-        return;
-    }
-
-    const extension = if (config.dir_mode == .pdf) "pdf" else "zip";
-    const destination = try target(allocator, io, source, config, extension);
-    defer allocator.free(destination);
-
-    if (config.dir_mode == .pdf) {
-        var sources = std.ArrayList([]const u8).empty;
-        defer sources.deinit(allocator);
-
-        for (entries.items) |entry| if (entry.kind == .image) try sources.append(allocator, entry.source);
-        if (sources.items.len == 0) return error.EmptyDirectory;
-
-        try pdf.toPdf(allocator, io, sources.items, destination, config, progress);
-    } else {
-        try archive.createZip(allocator, io, entries.items, destination, config, progress);
-    }
-
     try appendOutput(allocator, outputs, destination);
 }
 

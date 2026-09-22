@@ -4,7 +4,6 @@ const image_batch = @import("image_batch.zig");
 const protocol = @import("protocol.zig");
 const storage = @import("storage.zig");
 const zip = @import("zip.zig");
-const realesrgan = @import("realesrgan.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,49 +13,39 @@ pub const FileEntry = struct {
     kind: protocol.Kind,
 };
 
-pub fn createZip(
+pub fn createZipFromResults(
     alloc: Allocator,
     io: std.Io,
-    files: []const FileEntry,
+    names: []const []const u8,
+    results: []const image_batch.Result,
+    suffix: []const u8,
     destination: []const u8,
-    config: protocol.Config,
-    progress: ?protocol.Progress,
 ) !void {
-    if (files.len == 0) return error.EmptyArchive;
-    var inputs = std.ArrayList(image_batch.Source).empty;
-    defer inputs.deinit(alloc);
-    var names = std.ArrayList([]u8).empty;
-    defer {
-        for (names.items) |name| alloc.free(name);
-        names.deinit(alloc);
+    if (names.len == 0 or names.len != results.len) return error.EmptyArchive;
+
+    const owned_names = try alloc.alloc([]u8, names.len);
+    var owned_count: usize = 0;
+    errdefer {
+        for (owned_names[0..owned_count]) |name| alloc.free(name);
+        alloc.free(owned_names);
+    }
+    for (names) |name| {
+        owned_names[owned_count] = try outputName(alloc, name, suffix);
+        owned_count += 1;
     }
 
-    for (files) |entry| {
-        if (entry.kind != .image) continue;
-
-        const name = try outputName(alloc, entry.relative, config.suffix);
-        names.append(alloc, name) catch |err| {
-            alloc.free(name);
-            return err;
-        };
-        inputs.append(alloc, .{ .file = entry.source }) catch |err| return err;
-    }
-
-    if (inputs.items.len == 0) return error.EmptyArchive;
-
-    const results = try image_batch.process(alloc, io, inputs.items, config, progress);
-    defer image_batch.freeResults(alloc, results);
-
-    const output = try alloc.alloc(zip.ImageEntry, results.len);
-    defer alloc.free(output);
-    for (output, results, names.items) |*entry, result, name| {
+    const entries = try alloc.alloc(zip.ImageEntry, results.len);
+    defer alloc.free(entries);
+    for (entries, results, owned_names) |*entry, result, name| {
         entry.* = .{ .name = name, .bytes = result.bytes };
     }
 
-    const archive = try zip.createMemory(alloc, output);
-    defer alloc.free(archive);
+    const output = try zip.createMemory(alloc, entries);
+    defer alloc.free(output);
+    try storage.writeAtomic(io, destination, output);
 
-    try storage.writeAtomic(io, destination, archive);
+    for (owned_names) |name| alloc.free(name);
+    alloc.free(owned_names);
 }
 
 fn outputName(alloc: Allocator, relative: []const u8, suffix: []const u8) ![]u8 {

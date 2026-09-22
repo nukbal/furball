@@ -1,6 +1,7 @@
 const std = @import("std");
 const native_sdk = @import("native_sdk");
 
+const memory = @import("memory.zig");
 const operations = @import("operations.zig");
 const protocol = @import("protocol.zig");
 const realesrgan = @import("realesrgan.zig");
@@ -379,6 +380,7 @@ fn runJob(job: *Job) std.Io.Cancelable!void {
         return error.Canceled;
     };
     defer pool.semaphore.post(pool.io);
+    defer if (job.kind == .process) memory.releaseIdle();
 
     switch (job.kind) {
         .inspect => {

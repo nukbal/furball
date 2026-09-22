@@ -4,7 +4,11 @@
 #define NCNN_STDIO 1
 #define NCNN_STRING 1
 #define NCNN_SIMPLEOCV 0
+#if defined(__APPLE__)
+#define NCNN_SIMPLEOMP 0
+#else
 #define NCNN_SIMPLEOMP 1
+#endif
 #define NCNN_SIMPLESTL 0
 #define NCNN_SIMPLEMATH 0
 #define NCNN_THREADS 1

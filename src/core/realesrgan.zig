@@ -81,6 +81,7 @@ fn upscaleOnce(
 
     const option = c.ncnn_net_get_option(net) orelse return error.AllocationFailed;
     c.ncnn_option_set_num_threads(option, 1);
+    c.ncnn_option_set_use_local_pool_allocator(option, 0);
     c.ncnn_option_set_use_vulkan_compute(option, 0);
 
     const param = if (scale == 2) x2_param else x4_param;
@@ -136,10 +137,10 @@ fn upscaleOnce(
             if (c.ncnn_extractor_input(extractor, "data", input) != 0) return error.InferenceFailed;
 
             var output: c.ncnn_mat_t = null;
+            defer if (output) |mat| c.ncnn_mat_destroy(mat);
             if (c.ncnn_extractor_extract(extractor, "output", &output) != 0) return error.InferenceFailed;
 
             const output_mat = output orelse return error.InferenceFailed;
-            defer c.ncnn_mat_destroy(output_mat);
 
             const width = c.ncnn_mat_get_w(output_mat);
             const height = c.ncnn_mat_get_h(output_mat);

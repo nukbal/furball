@@ -187,7 +187,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
                         "layer/arm/scale_arm.cpp",
                     },
                     .flags = switch (target.result.os.tag) {
-                        .macos => &.{ "-std=c++11", "-Xpreprocessor", "-fopenmp", "-O3" },
+                        .macos => &.{ "-std=c++11", "-O3" },
                         else => &.{ "-std=c++11", "-fopenmp", "-O3" },
                     },
                 });
@@ -203,7 +203,7 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
                     "layer/packing.cpp",
                 },
                 .flags = switch (target.result.os.tag) {
-                    .macos => &.{ "-std=c++11", "-Xpreprocessor", "-fopenmp", "-O3" },
+                    .macos => &.{ "-std=c++11", "-O3" },
                     else => &.{ "-std=c++11", "-fopenmp", "-O3" },
                 },
             });

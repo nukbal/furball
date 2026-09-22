@@ -32,6 +32,10 @@
             .url = "git+https://github.com/Tencent/ncnn.git#305837fd4a722ebc47c5d72e72d8ec9ae970e932",
             .hash = "N-V-__8AAAucxAJxOnskCHATKT-DclBP9NQOMZli1b0GGY0o",
         },
+        .libwebp = .{
+            .url = "git+https://github.com/webmproject/libwebp.git?ref=v1.6.0#4fa21912338357f89e4fd51cf2368325b59e9bd9",
+            .hash = "N-V-__8AAEIyewDs-Qt2FWog6ZRUCvQm_27MKKOfSk54_teC",
+        },
     },
     .paths = .{
         "build.zig",

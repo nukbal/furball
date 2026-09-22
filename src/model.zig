@@ -211,7 +211,7 @@ pub const Model = struct {
     }
     pub fn processLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
         if (model.processing) return std.fmt.allocPrint(arena, "변환 중... {d}/{d}", .{ @min(model.process_completed, model.process_total), model.process_total }) catch "변환 중";
-        if (model.hasOutput()) return "변환 완료";
+        if (model.hasOutput()) return "다시 변환";
         return "변환 시작";
     }
     pub fn qualityFraction(model: *const Model) f32 {
@@ -264,7 +264,7 @@ pub const Model = struct {
         return model.isProcessing() or model.config_loading or model.config_saving;
     }
     pub fn hasOutput(model: *const Model) bool {
-        return model.output_count != 0;
+        return model.output_count != 0 and !model.isProcessing();
     }
     pub fn hasError(model: *const Model) bool {
         return model.error_len != 0 and model.hasFiles();

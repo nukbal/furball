@@ -2,7 +2,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-brew install zig ffmpeg
+brew install zig ffmpeg cmake glslang spirv-tools molten-vk
 
 
 # Add Real-ESRGAN anime models

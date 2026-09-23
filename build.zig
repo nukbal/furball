@@ -36,6 +36,31 @@ fn addFfmpegPackageStep(b: *std.Build, ffmpeg_prefix: []const u8) void {
     stage.has_side_effects = true;
 }
 
+fn addNcnnPackageStep(
+    b: *std.Build,
+    library: []const u8,
+    molten_vk_prefix: []const u8,
+    glslang_prefix: []const u8,
+    spirv_tools_prefix: []const u8,
+    ncnn_license: std.Build.LazyPath,
+) void {
+    const package_top = b.top_level_steps.get("package") orelse return;
+    const stage = b.addSystemCommand(&.{"bash"});
+    stage.addFileArg(b.path("scripts/bundle-ncnn-macos.sh"));
+    stage.addArg(b.pathFromRoot("zig-out/package/furball.app"));
+    stage.addArg(library);
+    stage.addArg(molten_vk_prefix);
+    stage.addArg(glslang_prefix);
+    stage.addArg(spirv_tools_prefix);
+    stage.addFileArg(ncnn_license);
+    for (package_top.step.dependencies.items) |dependency| {
+        stage.step.dependOn(dependency);
+    }
+    package_top.step.dependencies.clearRetainingCapacity();
+    package_top.step.dependOn(&stage.step);
+    stage.has_side_effects = true;
+}
+
 fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: []const u8) void {
     const target = app.exe.root_module.resolved_target.?;
     const optimize = app.exe.root_module.optimize.?;
@@ -224,42 +249,77 @@ fn addRawLibraries(b: *std.Build, app: native_sdk.AppArtifacts, ffmpeg_prefix: [
             module.addImport("ncnn", mod.createModule());
             module.addIncludePath(dep.path("src"));
             module.addIncludePath(b.path("libs/ncnn"));
-            if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .arm) {
-                module.addIncludePath(dep.path("src/layer"));
+            if (target.result.os.tag != .macos) {
+                if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .arm) {
+                    module.addIncludePath(dep.path("src/layer"));
+                    module.addCSourceFiles(.{
+                        .root = dep.path("src"),
+                        .files = &.{
+                            "layer/arm/binaryop_arm.cpp",
+                            "layer/arm/cast_arm.cpp",
+                            "layer/arm/convolution_arm.cpp",
+                            "layer/arm/interp_arm.cpp",
+                            "layer/arm/padding_arm.cpp",
+                            "layer/arm/packing_arm.cpp",
+                            "layer/arm/pixelshuffle_arm.cpp",
+                            "layer/arm/prelu_arm.cpp",
+                            "layer/arm/scale_arm.cpp",
+                        },
+                        .flags = &.{ "-std=c++11", "-fopenmp", "-O3" },
+                    });
+                }
                 module.addCSourceFiles(.{
                     .root = dep.path("src"),
                     .files = &.{
-                        "layer/arm/binaryop_arm.cpp",
-                        "layer/arm/cast_arm.cpp",
-                        "layer/arm/convolution_arm.cpp",
-                        "layer/arm/interp_arm.cpp",
-                        "layer/arm/padding_arm.cpp",
-                        "layer/arm/packing_arm.cpp",
-                        "layer/arm/pixelshuffle_arm.cpp",
-                        "layer/arm/prelu_arm.cpp",
-                        "layer/arm/scale_arm.cpp",
+                        "allocator.cpp", "blob.cpp", "c_api.cpp", "cpu.cpp", "datareader.cpp", "expression.cpp",
+                        "gpu.cpp", "layer.cpp", "mat.cpp", "mat_pixel.cpp", "mat_pixel_resize.cpp", "modelbin.cpp",
+                        "net.cpp", "option.cpp", "paramdict.cpp", "simpleomp.cpp",
+                        "layer/binaryop.cpp", "layer/cast.cpp", "layer/convolution.cpp", "layer/input.cpp", "layer/interp.cpp",
+                        "layer/padding.cpp", "layer/pixelshuffle.cpp", "layer/prelu.cpp", "layer/scale.cpp", "layer/split.cpp",
+                        "layer/packing.cpp",
                     },
-                    .flags = switch (target.result.os.tag) {
-                        .macos => &.{ "-std=c++11", "-O3" },
-                        else => &.{ "-std=c++11", "-fopenmp", "-O3" },
-                    },
+                    .flags = &.{ "-std=c++11", "-fopenmp", "-O3" },
                 });
             }
-            module.addCSourceFiles(.{
-                .root = dep.path("src"),
-                .files = &.{
-                    "allocator.cpp", "blob.cpp", "c_api.cpp", "cpu.cpp", "datareader.cpp", "expression.cpp",
-                    "gpu.cpp", "layer.cpp", "mat.cpp", "mat_pixel.cpp", "mat_pixel_resize.cpp", "modelbin.cpp",
-                    "net.cpp", "option.cpp", "paramdict.cpp", "simpleomp.cpp",
-                    "layer/binaryop.cpp", "layer/cast.cpp", "layer/convolution.cpp", "layer/input.cpp", "layer/interp.cpp",
-                    "layer/padding.cpp", "layer/pixelshuffle.cpp", "layer/prelu.cpp", "layer/scale.cpp", "layer/split.cpp",
-                    "layer/packing.cpp",
-                },
-                .flags = switch (target.result.os.tag) {
-                    .macos => &.{ "-std=c++11", "-O3" },
-                    else => &.{ "-std=c++11", "-fopenmp", "-O3" },
-                },
-            });
+        }
+
+        if (target.result.os.tag == .macos) {
+            const molten_vk_prefix = b.option([]const u8, "molten-vk-prefix", "MoltenVK Homebrew prefix") orelse switch (target.result.cpu.arch) {
+                .aarch64 => "/opt/homebrew/opt/molten-vk",
+                else => "/usr/local/opt/molten-vk",
+            };
+            const glslang_prefix = b.option([]const u8, "glslang-prefix", "glslang Homebrew prefix") orelse switch (target.result.cpu.arch) {
+                .aarch64 => "/opt/homebrew/opt/glslang",
+                else => "/usr/local/opt/glslang",
+            };
+            const spirv_tools_prefix = b.option([]const u8, "spirv-tools-prefix", "SPIRV-Tools Homebrew prefix") orelse switch (target.result.cpu.arch) {
+                .aarch64 => "/opt/homebrew/opt/spirv-tools",
+                else => "/usr/local/opt/spirv-tools",
+            };
+            const ncnn_build = b.addSystemCommand(&.{"bash"});
+            ncnn_build.addFileArg(b.path("scripts/build-ncnn-vulkan-macos.sh"));
+            ncnn_build.addDirectoryArg(dep.path("."));
+            ncnn_build.addArg(molten_vk_prefix);
+            ncnn_build.addArg(glslang_prefix);
+            const library_path = b.pathFromRoot("zig-out/deps/ncnn-vulkan/libncnn.dylib");
+            ncnn_build.addArg(library_path);
+            ncnn_build.has_side_effects = true;
+
+            const library_dir = std.fs.path.dirname(library_path) orelse @panic("ncnn library output has no parent directory");
+            for (mods[0..mod_count]) |module| {
+                module.addObjectFile(.{ .cwd_relative = library_path });
+                module.addRPathSpecial(library_dir);
+                module.linkFramework("Metal", .{});
+                module.linkFramework("Foundation", .{});
+                module.linkFramework("QuartzCore", .{});
+                module.linkFramework("CoreGraphics", .{});
+                module.linkFramework("IOSurface", .{});
+                module.linkFramework("AppKit", .{});
+                module.linkFramework("IOKit", .{});
+            }
+            app.exe.step.dependOn(&ncnn_build.step);
+            app.tests.step.dependOn(&ncnn_build.step);
+            addNcnnPackageStep(b, library_path, molten_vk_prefix, glslang_prefix, spirv_tools_prefix, dep.path("LICENSE.txt"));
         }
     }
 

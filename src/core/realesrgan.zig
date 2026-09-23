@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("ncnn");
 
 const max_pixels = @import("image.zig").max_pixels;
@@ -82,7 +83,8 @@ fn upscaleOnce(
     const option = c.ncnn_net_get_option(net) orelse return error.AllocationFailed;
     c.ncnn_option_set_num_threads(option, 1);
     c.ncnn_option_set_use_local_pool_allocator(option, 0);
-    c.ncnn_option_set_use_vulkan_compute(option, 0);
+    const use_vulkan = builtin.os.tag == .macos and c.furball_ncnn_vulkan_available() != 0;
+    c.ncnn_option_set_use_vulkan_compute(option, @intFromBool(use_vulkan));
 
     const param = if (scale == 2) x2_param else x4_param;
     const model = if (scale == 2) x2_model else x4_model;

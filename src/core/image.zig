@@ -89,12 +89,7 @@ pub fn encodeRgb(
     return encodeDecoded(alloc, io, &source, config);
 }
 
-fn encodeDecoded(
-    alloc: Allocator,
-    io: std.Io,
-    source: *DecodedImage,
-    config: protocol.Config,
-) ![]u8 {
+fn encodeDecoded(alloc: Allocator, io: std.Io, source: *DecodedImage, config: protocol.Config) ![]u8 {
     try io.checkCancel();
 
     const requested = config.width;

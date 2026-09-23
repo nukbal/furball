@@ -1,6 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const image = @import("image.zig");
+const ncnn = @import("ncnn");
 const protocol = @import("protocol.zig");
 
 const Allocator = std.mem.Allocator;
@@ -44,7 +46,11 @@ pub fn process(
         };
     }
 
-    const worker_count = @max(@as(usize, 1), @min(std.Thread.getCpuCount() catch 1, max_parallel_images));
+    const use_vulkan = builtin.os.tag == .macos and config.ai and ncnn.furball_ncnn_vulkan_available() != 0;
+    const worker_count = if (use_vulkan)
+        max_parallel_images
+    else
+        @max(@as(usize, 1), @min(std.Thread.getCpuCount() catch 1, max_parallel_images));
     var first: usize = 0;
     while (first < tasks.len) {
         try io.checkCancel();

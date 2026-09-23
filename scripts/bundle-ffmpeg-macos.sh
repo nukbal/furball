@@ -30,7 +30,7 @@ resolve_dependency() {
       ;;
     @rpath/*)
       basename="${dependency#@rpath/}"
-      for candidate in "$ffmpeg_lib/$basename" "$brew_root/lib/$basename"; do
+      for candidate in "$frameworks/$basename" "$ffmpeg_lib/$basename" "$brew_root/lib/$basename"; do
         if [ -f "$candidate" ]; then
           printf '%s\n' "$candidate"
           return
@@ -52,8 +52,10 @@ add_source() {
   esac
   seen_basenames="$seen_basenames|$basename"
   queue+=("$source")
-  rm -f "$frameworks/$basename"
-  cp -L "$source" "$frameworks/$basename"
+  if [ "$source" != "$frameworks/$basename" ]; then
+    rm -f "$frameworks/$basename"
+    cp -L "$source" "$frameworks/$basename"
+  fi
 }
 
 while read -r dependency _; do

@@ -106,23 +106,9 @@ fn encodeDecoded(
                 return source.encodeJpeg(alloc, config.quality, null);
             }
 
-            const ai_target = if (short_edge < realesrgan.min_model_input_dimension) blk: {
+            if (short_edge < realesrgan.min_model_input_dimension) {
                 try source.resizeShortEdgeExact(alloc, realesrgan.min_model_input_dimension);
-                break :blk requested;
-            } else blk: {
-                const requested_u64 = std.math.cast(u64, requested) orelse return error.InvalidResize;
-                const required_scale = std.math.add(u64, requested_u64, short_edge) catch return error.InvalidResize;
-                const scale = (required_scale - 1) / short_edge;
-                const model_scale: u32 = if (scale <= 2) 2 else 4;
-                const ai_input_short_u64 = std.math.add(u64, requested_u64, model_scale - 1) catch return error.InvalidResize;
-                const ai_input_short = @max(
-                    realesrgan.min_model_input_dimension,
-                    std.math.cast(u32, ai_input_short_u64 / model_scale) orelse return error.InvalidResize,
-                );
-                try source.resizeShortEdgeExact(alloc, ai_input_short);
-                const guaranteed_target = std.math.add(u32, source.shortEdge(), 1) catch return error.InvalidResize;
-                break :blk @max(requested, guaranteed_target);
-            };
+            }
 
             var enhanced_width: u32 = 0;
             var enhanced_height: u32 = 0;
@@ -132,7 +118,7 @@ fn encodeDecoded(
                 source.pixels,
                 source.width,
                 source.height,
-                ai_target,
+                requested,
                 &enhanced_width,
                 &enhanced_height,
             );
@@ -143,7 +129,7 @@ fn encodeDecoded(
             };
             defer enhanced.deinit(alloc);
 
-            if (enhanced.shortEdge() > requested) try enhanced.resizeShortEdge(alloc, requested);
+            if (enhanced.shortEdge() != requested) try enhanced.resizeShortEdgeExact(alloc, requested);
 
             return enhanced.encodeJpeg(alloc, config.quality, null);
         }

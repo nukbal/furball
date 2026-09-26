@@ -18,9 +18,14 @@ pub const max_thumbnail_blob_base64_bytes: usize = 256 * 1024;
 pub const Progress = struct {
     context: *anyopaque,
     advance_fn: *const fn (*anyopaque) void,
+    total_fn: ?*const fn (*anyopaque, usize) void = null,
 
     pub fn advance(progress: Progress) void {
         progress.advance_fn(progress.context);
+    }
+
+    pub fn setTotal(progress: Progress, total: usize) void {
+        if (progress.total_fn) |callback| callback(progress.context, total);
     }
 };
 

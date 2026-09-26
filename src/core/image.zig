@@ -27,12 +27,25 @@ pub const ImageInfo = struct {
 };
 
 pub fn dimensions(alloc: Allocator, io: std.Io, source: []const u8) !ImageInfo {
+    const stat = std.Io.Dir.cwd().statFile(io, source, .{ .follow_symlinks = false }) catch return error.SourceNotFound;
+    if (stat.kind != .file) return error.InvalidImageSource;
+    if (stat.size > max_input_bytes) return error.ImageInputTooLarge;
+    const header_size: usize = @intCast(@min(stat.size, 256 * 1024));
+    const header = try alloc.alloc(u8, header_size);
+    defer alloc.free(header);
+    var file = std.Io.Dir.cwd().openFile(io, source, .{ .follow_symlinks = false }) catch return error.ImageReadFailed;
+    defer file.close(io);
+    var length: usize = 0;
+    while (length < header.len) {
+        const count = file.readPositional(io, &.{header[length..]}, length) catch return error.ImageReadFailed;
+        if (count == 0) break;
+        length += count;
+    }
+    if (length == stat.size) return inspectMemory(header[0..length]);
+    if (inspectMemory(header[0..length])) |info| return info else |_| {}
     const bytes = try readBytes(alloc, io, source);
     defer alloc.free(bytes);
-
-    var decoded = try decode(alloc, bytes);
-    defer decoded.deinit(alloc);
-    return .{ .width = decoded.width, .height = decoded.height };
+    return inspectMemory(bytes);
 }
 
 pub fn encode(

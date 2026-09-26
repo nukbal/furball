@@ -8,11 +8,11 @@ pub fn outputDirectory(allocator: std.mem.Allocator, config: protocol.Config, so
     return allocator.dupe(u8, directory);
 }
 
-pub fn outputPath(allocator: std.mem.Allocator, config: protocol.Config, source: []const u8, extension: []const u8, collision: usize) ![]u8 {
+pub fn outputPath(allocator: std.mem.Allocator, config: protocol.Config, source: []const u8, extension: []const u8, collision: usize, is_directory: bool) ![]u8 {
     const directory = try outputDirectory(allocator, config, source);
     defer allocator.free(directory);
 
-    const stem = std.fs.path.stem(source);
+    const stem = if (is_directory) std.fs.path.basename(source) else std.fs.path.stem(source);
     if (stem.len == 0 or std.mem.eql(u8, stem, ".") or std.mem.eql(u8, stem, "..")) return error.InvalidSourceName;
 
     const suffix = if (collision == 0) "" else try std.fmt.allocPrint(allocator, " ({d})", .{collision});

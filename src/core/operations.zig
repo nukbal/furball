@@ -626,11 +626,12 @@ fn target(allocator: Allocator, io: std.Io, source: []const u8, config: protocol
     defer allocator.free(directory);
 
     try paths.requireOutputDirectory(io, directory);
+    const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
 
     var collision: usize = 0;
 
     while (true) : (collision += 1) {
-        const candidate = try paths.outputPath(allocator, config, source, extension, collision);
+        const candidate = try paths.outputPath(allocator, config, source, extension, collision, stat.kind == .directory);
 
         if (config.mode == .overwrite or !paths.exists(io, candidate)) return candidate;
         allocator.free(candidate);

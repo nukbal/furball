@@ -1,0 +1,6 @@
+#ifndef FURBALL_NCNN_EXPORT_H
+#define FURBALL_NCNN_EXPORT_H
+
+#define NCNN_EXPORT
+
+#endif

@@ -1,0 +1,63 @@
+.{
+    .name = .furball,
+    .fingerprint = 0xf8811e3b74702d07,
+    .version = "0.6.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .stb = .{
+            .url = "git+https://github.com/nothings/stb.git#2c980bb59875b0d32144a71867fbdebb2f77cd20",
+            .hash = "N-V-__8AAPJDTgBMvhz_RoGlqYS1cMahRQ6Q5GVqYKny36gQ",
+        },
+        .miniz = .{
+            .url = "git+https://github.com/richgel999/miniz.git#77d0dce8627735138c51770d1799a1ef48f2117d",
+            .hash = "N-V-__8AAJmKFgANnVgLMCG4IKGFiSk_OceSUlZrQfI_Lo-r",
+        },
+        .pdfio = .{
+            .url = "git+https://github.com/michaelrsweet/pdfio.git#5841fd0fbd8815dabe0af3aa49d47db9aef2a032",
+            .hash = "N-V-__8AAGfirABlbSGUOcuU4qDqnKp9QREJp3_KPOyw4q8p",
+        },
+        .ttf = .{
+            .url = "git+https://github.com/michaelrsweet/ttf.git#18ae783b8f73a499018b56b068dedbe9580f1645",
+            .hash = "N-V-__8AABKFUAAywC4Zu9TxciMC8xVnBp-U5ucL8atyEFtG",
+        },
+        .mozjpeg = .{
+            .url = "git+https://github.com/mozilla/mozjpeg.git?ref=v4.1.1#a2d2907ff023227e80c1e4efa809812410275a12",
+            .hash = "N-V-__8AAL3jggBhdzIMaG_ZK89ecfojCQpxPYYgZAQt6bp9",
+        },
+        .ncnn = .{
+            .url = "git+https://github.com/Tencent/ncnn.git?ref=20260526#e54f7b1f88434e1d844ea0551b880a1cfb079ce1",
+            .hash = "N-V-__8AALKvRQPQZh-tMfiwXCUbzXttvaFe7FprqDp2ENky",
+        },
+        .libwebp = .{
+            .url = "git+https://github.com/webmproject/libwebp.git?ref=v1.6.0#4fa21912338357f89e4fd51cf2368325b59e9bd9",
+            .hash = "N-V-__8AAEIyewDs-Qt2FWog6ZRUCvQm_27MKKOfSk54_teC",
+        },
+        .clay = .{
+            .url = "git+https://github.com/nicbarker/clay.git#e6cc36941ab2af5d81107617039d6f527a1c660b",
+            .hash = "N-V-__8AAJD1dwCrm4WaLcFFKlMrXQwYNnAXSMjKC_4L1L9O",
+        },
+        .sdl = .{
+            .url = "git+https://github.com/castholm/SDL.git#b72b3671502a70e109350ecac90afdc480dcfcc6",
+            .hash = "sdl-0.5.4+3.4.16-SDL--sQ4qAH3kwC19Zs1kxdHplaSDnWl2MUptZD4AItI",
+        },
+        .sdl_ttf = .{
+            .url = "git+https://github.com/libsdl-org/SDL_ttf.git#e7cf7ceeb41fbb59f67f27af6aa99401cc9eb888",
+            .hash = "N-V-__8AAK6WhAC4Af2ZvWszUhyzx3QVNZ8bUFRxwP4jO7db",
+        },
+        .freetype = .{
+            .url = "git+https://code.hexops.org/hexops/freetype.git#1d0f0f11162275d67d3db2cb4905ed5c659b8a41",
+            .hash = "freetype-0.0.0-Oa073aaddgBS9kbmOT8NQP-kfpHr3YJgIASnj5V9PsZX",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "libs",
+        "app.zon",
+        "assets",
+        "scripts",
+        "README.md",
+        "runtime",
+    },
+}

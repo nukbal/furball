@@ -4,7 +4,6 @@ const c = @import("pdfio");
 const image = @import("image.zig");
 const image_batch = @import("image_batch.zig");
 const protocol = @import("protocol.zig");
-const realesrgan = @import("realesrgan.zig");
 const storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;

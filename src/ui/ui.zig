@@ -2,7 +2,7 @@ const std = @import("std");
 const api = @import("clay");
 const Assets = @import("assets.zig");
 
-pub const Command = union(enum) { choose_files, choose_output, reveal_output, process, toggle_settings, mode_path, mode_overwrite, dir_none, dir_pdf, dir_zip, toggle_ai, remove_file: u16, select_item: u16 };
+pub const Command = union(enum) { choose_files, choose_output, reveal_output, process, toggle_settings, mode_path, mode_overwrite, dir_none, dir_pdf, dir_zip, toggle_ai, next_upscaler, remove_file: u16, select_item: u16 };
 
 pub const Input = enum { width, suffix };
 

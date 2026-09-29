@@ -4,7 +4,7 @@ const mozjpeg = @import("mozjpeg");
 const stb = @import("stb");
 const webp = @import("webp");
 const protocol = @import("protocol.zig");
-const realesrgan = @import("realesrgan.zig");
+const coreml_upscaler = @import("coreml_upscaler.zig");
 const storage = @import("storage.zig");
 
 const Allocator = std.mem.Allocator;
@@ -55,28 +55,29 @@ pub fn encode(
     destination: []const u8,
     config: protocol.Config,
     nonce: u64,
+    tile_parallelism: usize,
 ) !void {
-    const output = try encodeBytes(alloc, io, source, config, nonce, null);
+    const output = try encodeBytes(alloc, io, source, config, nonce, tile_parallelism);
     defer alloc.free(output);
 
     try storage.writeAtomic(io, destination, output);
 }
 
-pub fn encodeBytes(alloc: Allocator, io: std.Io, source: []const u8, config: protocol.Config, nonce: u64) ![]u8 {
+pub fn encodeBytes(alloc: Allocator, io: std.Io, source: []const u8, config: protocol.Config, nonce: u64, tile_parallelism: usize) ![]u8 {
     _ = nonce;
     try io.checkCancel();
     const input = try readBytes(alloc, io, source);
     defer alloc.free(input);
 
-    return encodeBytesFromMemory(alloc, io, input, config);
+    return encodeBytesFromMemory(alloc, io, input, config, tile_parallelism);
 }
 
-pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, config: protocol.Config) ![]u8 {
+pub fn encodeBytesFromMemory(alloc: Allocator, io: std.Io, input: []const u8, config: protocol.Config, tile_parallelism: usize) ![]u8 {
     var source = try decode(alloc, input);
     defer source.deinit(alloc);
     try io.checkCancel();
 
-    return encodeDecoded(alloc, io, &source, config);
+    return encodeDecoded(alloc, io, &source, config, tile_parallelism);
 }
 
 pub fn encodeRgb(
@@ -86,6 +87,7 @@ pub fn encodeRgb(
     height: u32,
     pixels: []const u8,
     config: protocol.Config,
+    tile_parallelism: usize,
 ) ![]u8 {
     const checked_width = std.math.cast(c_int, width) orelse return error.ImageDimensionsTooLarge;
     const checked_height = std.math.cast(c_int, height) orelse return error.ImageDimensionsTooLarge;
@@ -99,34 +101,36 @@ pub fn encodeRgb(
     defer source.deinit(alloc);
     try io.checkCancel();
 
-    return encodeDecoded(alloc, io, &source, config);
+    return encodeDecoded(alloc, io, &source, config, tile_parallelism);
 }
 
-fn encodeDecoded(alloc: Allocator, io: std.Io, source: *DecodedImage, config: protocol.Config) ![]u8 {
+fn encodeDecoded(alloc: Allocator, io: std.Io, source: *DecodedImage, config: protocol.Config, tile_parallelism: usize) ![]u8 {
     try io.checkCancel();
 
     const requested = config.width;
     if (source.shortEdge() < requested) {
         if (config.ai) {
             const short_edge = source.shortEdge();
-            if (short_edge < realesrgan.min_model_input_dimension and requested < realesrgan.min_ai_output_dimension) {
+            if (short_edge < coreml_upscaler.min_model_input_dimension and requested < coreml_upscaler.min_ai_output_dimension) {
                 try source.resizeShortEdgeExact(alloc, requested);
                 return source.encodeJpeg(alloc, config.quality, null);
             }
 
-            if (short_edge < realesrgan.min_model_input_dimension) {
-                try source.resizeShortEdgeExact(alloc, realesrgan.min_model_input_dimension);
+            if (short_edge < coreml_upscaler.min_model_input_dimension) {
+                try source.resizeShortEdgeExact(alloc, coreml_upscaler.min_model_input_dimension);
             }
 
             var enhanced_width: u32 = 0;
             var enhanced_height: u32 = 0;
-            const enhanced_pixels = try realesrgan.upscale(
+            const enhanced_pixels = try coreml_upscaler.upscale(
                 alloc,
                 io,
                 source.pixels,
                 source.width,
                 source.height,
                 requested,
+                config.upscaler,
+                tile_parallelism,
                 &enhanced_width,
                 &enhanced_height,
             );
@@ -483,7 +487,7 @@ test "png decode resize and mozjpeg encode complete" {
     defer alloc.free(input);
 
     try std.base64.standard.Decoder.decode(input, encoded);
-    const output = try encodeBytesFromMemory(std.testing.allocator, std.testing.io, input, .{ .width = 12, .quality = 88, .ai = false });
+    const output = try encodeBytesFromMemory(std.testing.allocator, std.testing.io, input, .{ .width = 12, .quality = 88, .ai = false }, 1);
     defer alloc.free(output);
 
     try std.testing.expect(output.len > 2);
@@ -501,7 +505,7 @@ test "webp decode and mozjpeg encode complete" {
 
     try std.testing.expectEqual(ImageInfo{ .width = 1, .height = 1 }, try inspectMemory(input));
 
-    const output = try encodeBytesFromMemory(alloc, std.testing.io, input, .{ .width = 1, .quality = 88, .ai = false });
+    const output = try encodeBytesFromMemory(alloc, std.testing.io, input, .{ .width = 1, .quality = 88, .ai = false }, 1);
     defer alloc.free(output);
 
     try std.testing.expectEqualSlices(u8, "\xff\xd8", output[0..2]);

@@ -1,0 +1,6 @@
+coremltools==9.0
+torch==2.7.0
+torchvision==0.22.0
+timm==0.9.16
+einops>=0.8,<1
+numpy<3

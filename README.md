@@ -2,8 +2,6 @@
 
 hobby app for compressing and organizing images, videos, PDFs and archives with SDL3 and Clay.
 
-## Build
-
 ```sh
 zig build run
 zig build -Doptimize=ReleaseSmall
@@ -14,7 +12,7 @@ zig build package -Doptimize=ReleaseSafe
 - image compression
 - image pdf archiving
 - zip archiving
-- super resolution
+- super resolution (Real-ESRGAN, PiperSR)
 - zip detection
 - pdf detection
 - pdf image conversion
@@ -26,5 +24,6 @@ zig build package -Doptimize=ReleaseSafe
 - [pdfio](https://github.com/michaelrsweet/pdfio)
 - [mozjpeg](https://github.com/mozilla/mozjpeg)
 - [FFmpeg](https://ffmpeg.org)
-- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), [ncnn](https://github.com/Tencent/ncnn)
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) AnimeVideo x2/x4 models converted to Core ML during dependency installation
+- [PiperSR](https://modelpiper.com/) Core ML model (CC BY 4.0)
 - [Pretendard](https://github.com/orioncactus/pretendard)

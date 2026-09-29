@@ -170,7 +170,7 @@ const Worker = struct {
 };
 
 const App = struct {
-    const Dialog = enum { files, output };
+    const Dialog = enum(u8) { files = 1, output = 2 };
 
     window: *sdl.SDL_Window,
     io: std.Io,
@@ -290,6 +290,10 @@ const App = struct {
                 self.state.config.ai = !self.state.config.ai;
                 self.persist();
             },
+            .next_upscaler => {
+                self.state.config.upscaler = self.state.config.upscaler.next();
+                self.persist();
+            },
         }
         self.dirty = true;
     }
@@ -297,7 +301,7 @@ const App = struct {
     fn openDialog(self: *App, dialog: Dialog) void {
         if (self.pending_dialog != null) return;
         self.pending_dialog = dialog;
-        self.dialog_kind.store(@intCast(@intFromEnum(dialog) + 1), .release);
+        self.dialog_kind.store(@intFromEnum(dialog), .release);
         const result = switch (dialog) {
             .files => Renderer.showOpenFileDialog(self.window, "", true, dialogResult, self),
             .output => Renderer.showOpenFolderDialog(self.window, self.state.outputPath(), dialogResult, self),
@@ -481,7 +485,7 @@ fn dialogResult(user_data: ?*anyopaque, filelist: [*c]const [*c]const u8, _: c_i
     app.dialog_path_count = 0;
     app.dialog_error = filelist == null;
     if (filelist != null and filelist[0] != null) {
-        const dialog: App.Dialog = @enumFromInt(kind - 1);
+        const dialog: App.Dialog = @enumFromInt(kind);
         const limit = if (dialog == .output) 1 else app.dialog_paths.len;
         while (app.dialog_path_count < limit and filelist[app.dialog_path_count] != null) : (app.dialog_path_count += 1) {
             const path = std.mem.span(filelist[app.dialog_path_count]);

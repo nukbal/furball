@@ -15,9 +15,14 @@ if [[ -z "$version" ]]; then
 fi
 
 rm -rf "$app"
-mkdir -p "$contents/MacOS" "$contents/Resources"
+mkdir -p "$contents/MacOS" "$contents/Resources/models"
 cp "$binary" "$contents/MacOS/furball"
 cp "$project_root/assets/icon.icns" "$contents/Resources/icon.icns"
+cp -R "$project_root/src/models/RealESRGAN_animevideo_x2_522_fp16.mlpackage" "$contents/Resources/models/"
+cp -R "$project_root/src/models/RealESRGAN_animevideo_x4_522_fp16.mlpackage" "$contents/Resources/models/"
+cp -R "$project_root/src/models/PiperSR_2x_256.mlpackage" "$contents/Resources/models/"
+cp "$project_root/src/models/LICENSE-Real-ESRGAN" "$contents/Resources/models/"
+cp "$project_root/src/models/LICENSE-PiperSR" "$contents/Resources/models/"
 
 cat > "$contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,7 +46,7 @@ cat > "$contents/Info.plist" <<EOF
     <key>CFBundleVersion</key>
     <string>$version</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>15.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

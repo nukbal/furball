@@ -370,6 +370,8 @@ pub fn processSources(
         const grouped = config.dir_mode != .none and (images.items.len > 1 or has_pdf_page);
         if (grouped) {
             try processImageBatch(allocator, io, config, images.items, &outputs, progress);
+        } else if (images.items.len > 1) {
+            try processImageFiles(allocator, io, config, images.items, &outputs, progress);
         } else {
             for (images.items) |input| try processImageInput(allocator, io, config, input, &outputs, progress);
         }
@@ -424,6 +426,35 @@ fn processImageInput(
     defer allocator.free(destination);
     try storage.writeAtomic(io, destination, results[0].bytes);
     try appendOutput(allocator, outputs, destination);
+}
+
+fn processImageFiles(
+    allocator: Allocator,
+    io: std.Io,
+    config: protocol.Config,
+    inputs: []const ImageInput,
+    outputs: *OutputList,
+    progress: ?protocol.Progress,
+) !void {
+    var first: usize = 0;
+    while (first < inputs.len) {
+        const last = @min(inputs.len, first + image_batch.max_parallel_images);
+        const batch_inputs = inputs[first..last];
+        const sources = try allocator.alloc(image_batch.Source, batch_inputs.len);
+        defer allocator.free(sources);
+        for (sources, batch_inputs) |*source, input| source.* = input.source;
+
+        const results = try image_batch.process(allocator, io, sources, config, progress);
+        defer image_batch.freeResults(allocator, results);
+
+        for (batch_inputs, results) |input, result| {
+            const destination = try targetForSource(allocator, io, input.metadata, config, "jpg", outputs.values.items);
+            defer allocator.free(destination);
+            try storage.writeAtomic(io, destination, result.bytes);
+            try appendOutput(allocator, outputs, destination);
+        }
+        first = last;
+    }
 }
 
 fn processImageBatch(

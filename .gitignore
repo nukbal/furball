@@ -1,9 +1,10 @@
 .zig-cache/
 zig-pkg/
 zig-out/
-src/models/*
 __pycache__/
 *.pyc
 *.log
 .DS_Store
 node_modules/
+src/models/*
+.venv-coreml/

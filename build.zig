@@ -277,89 +277,22 @@ fn addRawLibraries(b: *std.Build, app: AppArtifacts, ffmpeg_prefix: []const u8) 
         }
     }
 
-    // ncnn (for real-esrgan)
     {
-        const dep = b.dependency("ncnn", .{});
         const mod = b.addTranslateC(.{
-            .root_source_file = b.path("libs/ncnn/ncnn_c_api.h"),
+            .root_source_file = b.path("libs/coreml/coreml_bridge.h"),
             .target = target,
             .optimize = optimize,
         });
-        mod.addIncludePath(b.path("libs/ncnn"));
-        mod.addIncludePath(dep.path("src"));
-        if (target.result.os.tag != .windows) mod.linkSystemLibrary("pthread", .{});
 
         for (mods[0..mod_count]) |module| {
-            module.addImport("ncnn", mod.createModule());
-            module.addIncludePath(dep.path("src"));
-            module.addIncludePath(b.path("libs/ncnn"));
-            if (target.result.os.tag != .macos) {
-                if (target.result.cpu.arch == .aarch64 or target.result.cpu.arch == .arm) {
-                    module.addIncludePath(dep.path("src/layer"));
-                    module.addCSourceFiles(.{
-                        .root = dep.path("src"),
-                        .files = &.{
-                            "layer/arm/binaryop_arm.cpp",
-                            "layer/arm/cast_arm.cpp",
-                            "layer/arm/convolution_arm.cpp",
-                            "layer/arm/interp_arm.cpp",
-                            "layer/arm/padding_arm.cpp",
-                            "layer/arm/packing_arm.cpp",
-                            "layer/arm/pixelshuffle_arm.cpp",
-                            "layer/arm/prelu_arm.cpp",
-                            "layer/arm/scale_arm.cpp",
-                        },
-                        .flags = &.{ "-std=c++11", "-fopenmp", "-O3" },
-                    });
-                }
-                module.addCSourceFiles(.{
-                    .root = dep.path("src"),
-                    .files = &.{
-                        "allocator.cpp",         "blob.cpp",        "c_api.cpp",         "cpu.cpp",           "datareader.cpp",         "expression.cpp",
-                        "gpu.cpp",               "layer.cpp",       "mat.cpp",           "mat_pixel.cpp",     "mat_pixel_resize.cpp",   "modelbin.cpp",
-                        "net.cpp",               "option.cpp",      "paramdict.cpp",     "simpleomp.cpp",     "layer/binaryop.cpp",     "layer/cast.cpp",
-                        "layer/convolution.cpp", "layer/input.cpp", "layer/interp.cpp",  "layer/padding.cpp", "layer/pixelshuffle.cpp", "layer/prelu.cpp",
-                        "layer/scale.cpp",       "layer/split.cpp", "layer/packing.cpp",
-                    },
-                    .flags = &.{ "-std=c++11", "-fopenmp", "-O3" },
-                });
-            }
-        }
-
-        if (target.result.os.tag == .macos) {
-            const molten_vk_prefix = b.option([]const u8, "molten-vk-prefix", "MoltenVK Homebrew prefix") orelse switch (target.result.cpu.arch) {
-                .aarch64 => "/opt/homebrew/opt/molten-vk",
-                else => "/usr/local/opt/molten-vk",
-            };
-            const glslang_prefix = b.option([]const u8, "glslang-prefix", "glslang Homebrew prefix") orelse switch (target.result.cpu.arch) {
-                .aarch64 => "/opt/homebrew/opt/glslang",
-                else => "/usr/local/opt/glslang",
-            };
-            const spirv_tools_prefix = b.option([]const u8, "spirv-tools-prefix", "SPIRV-Tools Homebrew prefix") orelse switch (target.result.cpu.arch) {
-                .aarch64 => "/opt/homebrew/opt/spirv-tools",
-                else => "/usr/local/opt/spirv-tools",
-            };
-            const ncnn_build = b.addSystemCommand(&.{"bash"});
-            ncnn_build.addFileArg(b.path("scripts/build-ncnn-vulkan-macos.sh"));
-            ncnn_build.addDirectoryArg(dep.path("."));
-            ncnn_build.addArg(molten_vk_prefix);
-            ncnn_build.addArg(glslang_prefix);
-            const ncnn_archive = ncnn_build.addOutputFileArg("libncnn.a");
-
-            for (mods[0..mod_count]) |module| {
-                module.addObjectFile(ncnn_archive);
-                module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ molten_vk_prefix, "lib/libMoltenVK.a" }) });
-                module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ glslang_prefix, "lib/libSPIRV.dylib" }) });
-                module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ glslang_prefix, "lib/libglslang.dylib" }) });
-                module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ spirv_tools_prefix, "lib/libSPIRV-Tools-opt.dylib" }) });
-                module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ spirv_tools_prefix, "lib/libSPIRV-Tools.dylib" }) });
-                module.linkFramework("Metal", .{});
+            module.addImport("coreml", mod.createModule());
+            if (target.result.os.tag == .macos) {
+                module.addCSourceFile(.{ .file = b.path("libs/coreml/coreml_bridge.m"), .flags = &.{"-fobjc-arc"} });
+                module.linkFramework("CoreML", .{});
+                module.linkFramework("CoreVideo", .{});
                 module.linkFramework("Foundation", .{});
-                module.linkFramework("QuartzCore", .{});
-                module.linkFramework("CoreGraphics", .{});
-                module.linkFramework("IOSurface", .{});
-                module.linkFramework("AppKit", .{});
-                module.linkFramework("IOKit", .{});
+            } else {
+                module.addCSourceFile(.{ .file = b.path("libs/coreml/coreml_stub.c") });
             }
         }
     }

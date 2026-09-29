@@ -4,6 +4,25 @@ pub const Mode = enum { path, overwrite };
 pub const DirMode = enum { none, pdf, zip };
 pub const Kind = enum { image, video, pdf, zip, directory, archive_file };
 
+pub const Upscaler = enum(u8) {
+    real_esrgan = 0,
+    pipersr = 1,
+
+    pub fn next(self: Upscaler) Upscaler {
+        return switch (self) {
+            .real_esrgan => .pipersr,
+            .pipersr => .real_esrgan,
+        };
+    }
+
+    pub fn label(self: Upscaler) []const u8 {
+        return switch (self) {
+            .real_esrgan => "Real-ESRGAN",
+            .pipersr => "PiperSR",
+        };
+    }
+};
+
 pub const Source = struct {
     path: []const u8,
     name: []const u8,
@@ -27,6 +46,7 @@ pub const Progress = struct {
     pub fn setTotal(progress: Progress, total: usize) void {
         if (progress.total_fn) |callback| callback(progress.context, total);
     }
+
 };
 
 pub const Config = struct {
@@ -36,6 +56,7 @@ pub const Config = struct {
     width: u32 = 1440,
     quality: u8 = 85,
     ai: bool = false,
+    upscaler: Upscaler = .real_esrgan,
     dir_mode: DirMode = .none,
 };
 

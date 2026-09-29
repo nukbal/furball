@@ -1,11 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const image = @import("core/image.zig");
 const operations = @import("core/operations.zig");
 const pdf = @import("core/pdf.zig");
 const paths = @import("core/paths.zig");
 const protocol = @import("core/protocol.zig");
-const realesrgan = @import("core/realesrgan.zig");
+const coreml_upscaler = @import("core/coreml_upscaler.zig");
 const zip = @import("core/zip.zig");
 
 const png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -41,7 +42,7 @@ fn fixturePng(allocator: std.mem.Allocator) ![]u8 {
 fn fixtureJpeg(allocator: std.mem.Allocator) ![]u8 {
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    return image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1, .quality = 80, .ai = false });
+    return image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1, .quality = 80, .ai = false }, 1);
 }
 
 fn fixtureFlatePdf(allocator: std.mem.Allocator) ![]u8 {
@@ -343,7 +344,7 @@ test "fixed image pipeline never upscales without AI" {
     const allocator = std.testing.allocator;
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    const output = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = false });
+    const output = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 1440, .quality = 80, .ai = false }, 1);
     defer allocator.free(output);
     const dimensions = try image.inspectMemory(output);
     try std.testing.expectEqual(@as(u32, 1), dimensions.width);
@@ -357,18 +358,19 @@ test "raw AI input below model minimum is rejected" {
     var raw_height: u32 = 0;
     try std.testing.expectError(
         error.InvalidResize,
-        realesrgan.upscale(allocator, std.testing.io, &raw_input, 4, 4, 8, &raw_width, &raw_height),
+        coreml_upscaler.upscale(allocator, std.testing.io, &raw_input, 4, 4, 8, .real_esrgan, 1, &raw_width, &raw_height),
     );
 }
 
 test "AI image conversion repeats safe 32x32 inference" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     var raw_input: [32 * 32 * 3]u8 = undefined;
     for (&raw_input, 0..) |*pixel, index| pixel.* = @intCast((index * 5) % 256);
 
     var raw_width: u32 = 0;
     var raw_height: u32 = 0;
-    const first = try realesrgan.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    const first = try coreml_upscaler.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, .real_esrgan, 1, &raw_width, &raw_height);
     defer allocator.free(first);
     try std.testing.expectEqual(@as(u32, 64), raw_width);
     try std.testing.expectEqual(@as(u32, 64), raw_height);
@@ -376,7 +378,7 @@ test "AI image conversion repeats safe 32x32 inference" {
 
     raw_width = 0;
     raw_height = 0;
-    const second = try realesrgan.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, &raw_width, &raw_height);
+    const second = try coreml_upscaler.upscale(allocator, std.testing.io, &raw_input, 32, 32, 64, .real_esrgan, 1, &raw_width, &raw_height);
     defer allocator.free(second);
     try std.testing.expectEqual(@as(u32, 64), raw_width);
     try std.testing.expectEqual(@as(u32, 64), raw_height);
@@ -387,7 +389,7 @@ test "tiny AI image conversion uses normal resize below model minimum" {
     const allocator = std.testing.allocator;
     const png = try fixturePng(allocator);
     defer allocator.free(png);
-    const jpeg = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 2, .quality = 88, .ai = true });
+    const jpeg = try image.encodeBytesFromMemory(allocator, std.testing.io, png, .{ .width = 2, .quality = 88, .ai = true }, 1);
     defer allocator.free(jpeg);
     try std.testing.expectEqualSlices(u8, "\xff\xd8", jpeg[0..2]);
     try std.testing.expectEqual(image.ImageInfo{ .width = 2, .height = 2 }, try image.inspectMemory(jpeg));

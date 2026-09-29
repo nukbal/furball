@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const clay = @import("clay");
 const ui = @import("ui.zig");
 const state_mod = @import("../state.zig");
@@ -244,6 +245,7 @@ fn drawRow(view: *View, row_index: u32, name: []const u8, metadata: []const u8, 
 
 fn drawConfig(view: *View, model: *const state_mod.State, height: f32, scratch: std.mem.Allocator) void {
     const disabled = model.controlsDisabled();
+    const ai_supported = builtin.os.tag == .macos;
     var sidebar: clay.Clay_ElementDeclaration = .{};
     sidebar.layout = ui.layout(ui.fixedAxis(256), ui.fixedAxis(@max(0, height)), clay.CLAY_TOP_TO_BOTTOM, 8, 0);
     sidebar.backgroundColor = ui.clayColor(ui.colors.background);
@@ -276,16 +278,19 @@ fn drawConfig(view: *View, model: *const state_mod.State, height: f32, scratch: 
       ui.end();
     ui.end();
 
-    ui.panel("image-card", ui.growAxis(), ui.fixedAxis(232), 10, 6, ui.colors.surface);
+    ui.panel("image-card", ui.growAxis(), ui.fixedAxis(278), 10, 6, ui.colors.surface);
       ui.textField(view.elementsPtr(), "width-field", "짧은 변 길이 (px)", model.width(), "1440", .width, view.focused == .width, !disabled);
       _ = ui.slider(view.elementsPtr(), "quality-slider", model.qualityFraction(), !disabled);
       const quality = std.fmt.allocPrint(scratch, "품질 {d}", .{model.config.quality}) catch "품질";
       ui.text(quality, .{ .size = 12, .color = ui.colors.muted });
       ui.textField(view.elementsPtr(), "suffix-field", "파일 이름 접미사", model.suffix(), "예: -optimized", .suffix, view.focused == .suffix, !disabled);
       ui.begin("ai-row", ui.growAxis(), ui.fixedAxis(28), clay.CLAY_LEFT_TO_RIGHT, 0, 8);
-        ui.checkbox(view.elementsPtr(), "toggle-ai", .{ .command = .toggle_ai }, model.aiEnabled(), !disabled);
+        ui.checkbox(view.elementsPtr(), "toggle-ai", .{ .command = .toggle_ai }, model.aiEnabled(), !disabled and ai_supported);
         ui.text("AI 업스케일", .{ .size = 12, .font = .medium });
       ui.end();
+      const upscaler_label = std.fmt.allocPrint(scratch, "AI 모델: {s}  ›", .{model.config.upscaler.label()}) catch "AI 모델";
+      ui.button(view.elementsPtr(), ui.View.makeId("next-upscaler"), .{ .label = upscaler_label, .action = .{ .command = .next_upscaler }, .enabled = !disabled and model.aiEnabled() and ai_supported, .width = ui.growAxis(), .height = 28 });
+      if (!ai_supported) ui.text("Core ML은 macOS에서 사용할 수 있습니다", .{ .size = 11, .color = ui.colors.muted });
     ui.end();
 
     ui.panel("batch-card", ui.growAxis(), ui.fixedAxis(75), 10, 6, ui.colors.surface);

@@ -1,12 +1,10 @@
 const std = @import("std");
-const builtin = @import("builtin");
-
 const image = @import("image.zig");
-const ncnn = @import("ncnn");
+const coreml_upscaler = @import("coreml_upscaler.zig");
 const protocol = @import("protocol.zig");
 
 const Allocator = std.mem.Allocator;
-const max_parallel_images: usize = 8;
+pub const max_parallel_images: usize = 8;
 
 pub const Source = union(enum) {
     file: []const u8,
@@ -43,18 +41,24 @@ pub fn process(
             .io = io,
             .source = source,
             .config = config,
+            .tile_parallelism = 1,
         };
     }
 
-    const use_vulkan = builtin.os.tag == .macos and config.ai and ncnn.furball_ncnn_vulkan_available() != 0;
-    const worker_count = if (use_vulkan)
-        max_parallel_images
-    else
-        @max(@as(usize, 1), @min(std.Thread.getCpuCount() catch 1, max_parallel_images));
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    const max_parallel_tasks = if (config.ai) coreml_upscaler.max_concurrent_inferences else max_parallel_images;
+    const worker_count = @max(@as(usize, 1), @min(cpu_count, max_parallel_tasks));
     var first: usize = 0;
     while (first < tasks.len) {
         try io.checkCancel();
         const last = @min(tasks.len, first + worker_count);
+        const active_image_count = last - first;
+        const tile_parallelism = if (config.ai)
+            (coreml_upscaler.max_concurrent_inferences + active_image_count - 1) / active_image_count
+        else
+            1;
+        for (tasks[first..last]) |*task| task.tile_parallelism = tile_parallelism;
+
         var group: std.Io.Group = .init;
         for (tasks[first..last]) |*task| {
             group.concurrent(io, Task.run, .{task}) catch |err| {
@@ -96,6 +100,7 @@ const Task = struct {
     io: std.Io,
     source: Source,
     config: protocol.Config,
+    tile_parallelism: usize,
     output: ?[]u8 = null,
     width: u32 = 0,
     height: u32 = 0,
@@ -103,9 +108,9 @@ const Task = struct {
 
     fn run(task: *Task) std.Io.Cancelable!void {
         const output = switch (task.source) {
-            .file => |source| image.encodeBytes(task.allocator, task.io, source, task.config, 0),
-            .encoded => |source| image.encodeBytesFromMemory(task.allocator, task.io, source, task.config),
-            .rgb => |source| image.encodeRgb(task.allocator, task.io, source.width, source.height, source.pixels, task.config),
+            .file => |source| image.encodeBytes(task.allocator, task.io, source, task.config, 0, task.tile_parallelism),
+            .encoded => |source| image.encodeBytesFromMemory(task.allocator, task.io, source, task.config, task.tile_parallelism),
+            .rgb => |source| image.encodeRgb(task.allocator, task.io, source.width, source.height, source.pixels, task.config, task.tile_parallelism),
         } catch |err| {
             task.failure = err;
             if (err == error.Canceled) return error.Canceled;

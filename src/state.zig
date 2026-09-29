@@ -4,7 +4,7 @@ const operations = @import("core/operations.zig");
 const Allocator = std.mem.Allocator;
 
 pub const EditOperation = enum { backspace, delete, left, right, home, end };
-pub const max_paths = 64;
+pub const max_paths = 256;
 pub const max_path_bytes = 1024;
 
 pub const Item = struct {
